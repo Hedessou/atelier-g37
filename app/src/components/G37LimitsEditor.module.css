@@ -1,0 +1,18 @@
+.card { background: var(--card); color: var(--card-foreground); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--spacing-4); }
+.head { margin-bottom: var(--spacing-3); }
+.title { margin: 0 0 4px; font-family: var(--font-family-display); font-size: 1.05rem; }
+.sub { margin: 0; font-size: 0.8rem; color: var(--muted-foreground); line-height: 1.5; }
+.list { display: grid; gap: 6px; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) 84px 84px auto; gap: var(--spacing-2); align-items: center; padding: 6px 0; border-top: 1px solid var(--border); }
+.headRow { border-top: none; font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted-foreground); padding-bottom: 0; }
+.who { display: grid; min-width: 0; }
+.who strong, .who span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who span { font-size: 0.75rem; color: var(--muted-foreground); }
+.num { font-family: var(--font-family-monospace); text-align: center; }
+@media (max-width: 520px) {
+  .row { grid-template-columns: 1fr 1fr; }
+  .who { grid-column: 1 / -1; }
+  .headRow { display: none; }
+  .row > button { grid-column: 1 / -1; }
+}
+

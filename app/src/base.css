@@ -1,0 +1,47 @@
+/* Polices embarquées dans l'app (fonctionnent hors ligne) : voir main.tsx */
+
+:root {
+  /* Overlay layers */
+  --z-overlay: 400;
+  --z-spotlight: 1000;
+  --z-critical: 2000;
+  --spacing-1: 0.25rem; --spacing-2: 0.5rem; --spacing-3: 0.75rem; --spacing-4: 1rem;
+  --spacing-6: 1.5rem; --spacing-8: 2rem; --spacing-12: 3rem; --spacing-16: 4rem; --spacing-20: 5rem;
+  --background: #f4f6f8; --foreground: #14202b;
+  --surface: #eef2f5; --surface-foreground: #14202b;
+  --sidebar: #101a23; --sidebar-foreground: #eef3f6;
+  --card: #ffffff; --card-foreground: #14202b;
+  --popup: #ffffff; --popup-foreground: #14202b;
+  --primary: #1769d3; --primary-foreground: #ffffff;
+  --secondary: #e7edf2; --secondary-foreground: #20303d;
+  --accent: #dcecff; --accent-foreground: #1256ae;
+  --muted: #e8edf1; --muted-foreground: #62717d;
+  --success: #1e8e62; --success-foreground: #ffffff;
+  --error: #c83d45; --error-foreground: #ffffff;
+  --warning: #c47b18; --warning-foreground: #ffffff;
+  --info: #1769d3; --info-foreground: #ffffff; --info-hover: #1259b6; --info-active: #0f4b99;
+  --border: #d7dfe5;
+  --font-family-base: 'IBM Plex Sans', sans-serif; --font-family-display: 'Bricolage Grotesque', sans-serif;
+  --font-family-monospace: 'IBM Plex Mono', monospace; --font-family-cursive: cursive;
+  --shadow: 0 1px 2px rgba(20,32,43,.05); --shadow-md: 0 5px 18px rgba(20,32,43,.08);
+  --shadow-lg: 0 12px 32px rgba(20,32,43,.12); --shadow-focus: 0 0 0 3px rgba(23,105,211,.18);
+  --radius-sm: 6px; --radius: 9px; --radius-md: 12px; --radius-lg: 16px; --radius-full: 999px;
+  --animation-duration-fast: 120ms; --animation-duration-normal: 180ms; --animation-duration-slow: 300ms;
+  --chart-color-1: #1769d3; --chart-color-2: #1e8e62; --chart-color-3: #c47b18; --chart-color-4: #7b61b8; --chart-color-5: #5d7284;
+}
+.dark { --background:#0d151d; --foreground:#e9f0f4; --surface:#15212b; --surface-foreground:#e9f0f4; --sidebar:#091018; --sidebar-foreground:#e9f0f4; --card:#16232e; --card-foreground:#e9f0f4; --popup:#16232e; --popup-foreground:#e9f0f4; --secondary:#20303c; --secondary-foreground:#e9f0f4; --accent:#173b67; --accent-foreground:#b9d7ff; --muted:#1c2a35; --muted-foreground:#9aaab6; --border:#2a3a46; }
+
+/* Styles généraux de l'app (fournis automatiquement par Floot auparavant). */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-family-base);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+#root { min-height: 100vh; padding-bottom: env(safe-area-inset-bottom); }
+h1, h2, h3 { font-family: var(--font-family-display); }
+button, input, select, textarea { font: inherit; }

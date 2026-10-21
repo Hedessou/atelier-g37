@@ -1,0 +1,140 @@
+import { z } from "zod";
+import { nanoid } from "nanoid";
+import { db, sql } from "../lib/db.ts";
+import { getServerUserSession } from "../lib/session.ts";
+import { g37 } from "../shared/g37.ts";
+import { BUCKET_CHAT, supa } from "../lib/supa.ts";
+import { json, readSuperjson, sj } from "../lib/http.ts";
+import { loadAndRunDueAlerts } from "../lib/dueAlerts.ts";
+
+// GET users (admin) — page Administration.
+export async function handleUsers(request: Request): Promise<Response> {
+  try {
+    const { user } = await getServerUserSession(request);
+    if (user.role !== "admin") return sj({ message: "Accès administrateur requis" }, 403);
+    const users = await db.selectFrom("users").select(["id", "email", "displayName", "role", "createdAt"]).orderBy("createdAt", "asc").execute();
+    return sj({ users });
+  } catch {
+    return sj({ message: "Authentification requise" }, 401);
+  }
+}
+
+// POST userRole (admin)
+export async function handleUserRole(request: Request): Promise<Response> {
+  try {
+    const { user } = await getServerUserSession(request);
+    if (user.role !== "admin") return sj({ message: "Accès administrateur requis" }, 403);
+    const body = z.object({ id: z.number().int().positive(), role: z.enum(["admin", "user"]) }).parse(await readSuperjson(request));
+    if (body.id === user.id && body.role !== "admin") return sj({ message: "Un administrateur ne peut pas retirer son propre rôle." }, 400);
+    await db.updateTable("users").set({ role: body.role }).where("id", "=", body.id).execute();
+    return sj({ success: true });
+  } catch (e) {
+    return sj({ message: e instanceof Error ? e.message : "Requête invalide" }, 400);
+  }
+}
+
+// POST g37/push — enregistre (ou retire) le jeton de notification Firebase de ce téléphone.
+export async function handlePush(request: Request): Promise<Response> {
+  try {
+    const { user } = await getServerUserSession(request);
+    const input = z.discriminatedUnion("op", [
+      z.object({ op: z.literal("save"), token: z.string().min(10).max(4096), platform: z.string().max(20).default("android") }),
+      z.object({ op: z.literal("remove"), token: z.string().min(10).max(4096) }),
+    ]).parse(await readSuperjson(request));
+    if (input.op === "remove") {
+      await db.deleteFrom("pushTokens").where("token", "=", input.token).where("userId", "=", user.id).execute();
+    } else {
+      await db.insertInto("pushTokens").values({ token: input.token, userId: user.id, platform: input.platform })
+        .onConflict((oc) => oc.column("token").doUpdateSet({ userId: user.id, platform: input.platform, createdAt: new Date() })).execute();
+    }
+    return sj({ success: true });
+  } catch (error) {
+    return sj({ error: error instanceof Error ? error.message : "Requête invalide" }, 400);
+  }
+}
+
+const FORBIDDEN = /^(text\/html|application\/(xhtml\+xml|javascript|x-javascript)|text\/javascript)|xml/i;
+export const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+
+// POST g37/upload — lien d'envoi direct d'une pièce jointe de la discussion vers le stockage.
+export async function handleUpload(request: Request): Promise<Response> {
+  let userId: number;
+  try { userId = (await getServerUserSession(request)).user.id; } catch { return sj({ error: "Authentification requise" }, 401); }
+  try {
+    const me = await db.selectFrom("users").select(["role", "jobRole", "pending"]).where("id", "=", userId).executeTakeFirst();
+    if (!g37.can("forum", me)) return sj({ error: "Tu n'as pas le droit de publier dans la discussion." }, 403);
+    const input = z.object({
+      fileName: z.string().min(1).max(200), contentType: z.string().min(1).max(120), sizeBytes: z.number().int().min(1).max(MAX_UPLOAD_BYTES),
+    }).parse(await readSuperjson(request));
+    if (FORBIDDEN.test(input.contentType)) return sj({ error: "Ce type de fichier n'est pas accepté (HTML, script ou XML)." }, 400);
+    const safe = input.fileName.replace(/[^\w.\-]+/g, "_").slice(-80);
+    const fileKey = `chat/${nanoid(12)}-${safe}`;
+    const { data, error } = await supa.storage.from(BUCKET_CHAT).createSignedUploadUrl(fileKey);
+    if (error || !data) return sj({ error: error?.message ?? "Envoi impossible" }, 500);
+    return sj({ fileKey, presignedUrl: data.signedUrl, headers: { "Content-Type": input.contentType, "x-upsert": "false" } });
+  } catch (error) {
+    return sj({ error: error instanceof Error ? error.message : "Envoi impossible" }, 400);
+  }
+}
+
+// GET g37/manual_status / POST g37/manual_import — texte du manuel, extrait du PDF directement sur le téléphone.
+export async function handleManual(request: Request): Promise<Response> {
+  let userId: number;
+  try { userId = (await getServerUserSession(request)).user.id; } catch { return json({ error: "Authentification requise." }, 401); }
+  if (request.method === "GET") {
+    const [cfg] = await sql`SELECT manual_file_name, updated_at FROM g37_manual_config WHERE id = 1`;
+    const [cnt] = await sql`SELECT count(*)::int AS n FROM g37_manual_chunks`;
+    return json({ manualReady: Number(cnt?.n ?? 0) > 0, chunks: Number(cnt?.n ?? 0), fileName: cfg?.manual_file_name ?? null, updatedAt: cfg?.updated_at ?? null });
+  }
+  const me = await db.selectFrom("users").select(["role", "displayName"]).where("id", "=", userId).executeTakeFirst();
+  if (me?.role !== "admin") return json({ error: "Réservé à l'administrateur." }, 403);
+  // deno-lint-ignore no-explicit-any
+  const body = await request.json().catch(() => ({})) as any;
+  if (!Array.isArray(body.chunks)) return json({ error: "Aucun texte reçu." }, 400);
+  const sourceId = String(body.sourceId || "g37-manual-text").slice(0, 80);
+  const rows = body.chunks.slice(0, 100).map((c: { pageStart?: number; pageEnd?: number; content?: string }) => {
+    const start = Math.max(1, Math.trunc(Number(c?.pageStart)) || 1);
+    const end = Math.max(start, Math.trunc(Number(c?.pageEnd)) || start);
+    return { pageStart: start, pageEnd: end, content: String(c?.content ?? "").trim().slice(0, 20000) };
+  }).filter((r: { content: string }) => r.content.length > 0);
+  // Remplacement : l'ancien manuel est effacé au premier lot du nouvel import.
+  if (body.replace) await sql`DELETE FROM g37_manual_chunks`;
+  if (rows.length) {
+    await sql`INSERT INTO g37_manual_chunks (source_file_id, page_no, page_end, content)
+      SELECT ${sourceId}, t.p, t.e, t.c
+      FROM unnest(${rows.map((r: { pageStart: number }) => r.pageStart)}::int[], ${rows.map((r: { pageEnd: number }) => r.pageEnd)}::int[], ${rows.map((r: { content: string }) => r.content)}::text[]) AS t(p, e, c)`;
+  }
+  if (body.finalize) {
+    await sql`INSERT INTO g37_manual_config (id, manual_file_name, updated_by, updated_at) VALUES (1, ${String(body.fileName ?? "manuel.pdf").slice(0, 200)}, ${me.displayName}, now())
+      ON CONFLICT (id) DO UPDATE SET manual_file_name = excluded.manual_file_name, updated_by = excluded.updated_by, updated_at = now()`;
+  }
+  const [cnt] = await sql`SELECT count(*)::int AS n FROM g37_manual_chunks`;
+  return json({ ready: Boolean(body.finalize), sourceId, chunks: Number(cnt?.n ?? 0) });
+}
+
+// GET app/version — informations de mise à jour (contenu et version Android minimale).
+export async function handleVersion(): Promise<Response> {
+  const rows = await db.selectFrom("appConfig").select(["key", "value"]).where("key", "like", "app.%").execute();
+  const cfg = Object.fromEntries(rows.map((r) => [r.key.slice(4), r.value]));
+  return json({
+    bundleVersion: cfg.bundleVersion ?? null,
+    bundleUrl: cfg.bundleUrl ?? null,
+    bundleChecksum: cfg.bundleChecksum ?? null,
+    nativeVersionCode: cfg.nativeVersionCode ? Number(cfg.nativeVersionCode) : null,
+    minNativeVersionCode: cfg.minNativeVersionCode ? Number(cfg.minNativeVersionCode) : null,
+    apkUrl: cfg.apkUrl ?? null,
+    notes: cfg.notes ?? null,
+  });
+}
+
+// POST cron/due — appelée toutes les heures par la tâche planifiée de la base (clé secrète en base).
+export async function handleCron(request: Request): Promise<Response> {
+  const key = request.headers.get("x-cron-key") ?? "";
+  const row = await db.selectFrom("appConfig").select("value").where("key", "=", "cron.key").executeTakeFirst();
+  if (!row || !key || key !== row.value) return json({ error: "forbidden" }, 403);
+  await loadAndRunDueAlerts();
+  // Ménage : journal anti-doublons de la synchronisation conservé 90 jours.
+  await sql`DELETE FROM sync_ops WHERE applied_at < now() - interval '90 days'`;
+  await sql`DELETE FROM app_sessions WHERE expires_at < now()`;
+  return json({ ok: true });
+}

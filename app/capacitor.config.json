@@ -1,0 +1,29 @@
+{
+  "appId": "com.atelierg37.maintenance",
+  "appName": "Atelier G37",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#0f1b2d"
+  },
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "launchAutoHide": false,
+      "backgroundColor": "#0f1b2d",
+      "showSpinner": false
+    },
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    },
+    "CapacitorUpdater": {
+      "autoUpdate": false,
+      "appReadyTimeout": 15000,
+      "resetWhenUpdate": true,
+      "statsUrl": ""
+    }
+  }
+}

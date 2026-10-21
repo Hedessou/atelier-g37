@@ -1,0 +1,10 @@
+node_modules/
+dist/
+app/android/
+.old/
+floot-src/
+*.jks
+*.keystore
+*.apk
+bundle.zip
+scripts/

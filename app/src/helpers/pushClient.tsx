@@ -1,0 +1,97 @@
+import { Capacitor } from "@capacitor/core";
+import { PushNotifications } from "@capacitor/push-notifications";
+import { postG37Push } from "../endpoints/g37/push_POST.schema";
+import { PUSH_ENABLED } from "../lib/config";
+import { isOnline, onOnlineChange } from "../lib/net";
+
+// Notifications Android (Firebase). Même interface que l'ancienne version web :
+// enablePush, disablePush, isPushOptedIn, onPushEnabledChange, onPushMessage.
+const TOKEN_KEY = "g37.push.token";
+const SYNCED_KEY = "g37.push.synced";
+
+const enabledListeners = new Set<(on: boolean) => void>();
+const messageListeners = new Set<(p: { title?: string; body?: string; data?: Record<string, string> }) => void>();
+let listenersReady = false;
+
+export const pushSupported = () => Capacitor.isNativePlatform() && PUSH_ENABLED;
+
+export function isPushOptedIn(): boolean {
+  try { return !!localStorage.getItem(TOKEN_KEY); } catch { return false; }
+}
+
+export function onPushEnabledChange(cb: (on: boolean) => void) {
+  enabledListeners.add(cb);
+  return () => { enabledListeners.delete(cb); };
+}
+
+export function onPushMessage(cb: (p: { title?: string; body?: string; data?: Record<string, string> }) => void) {
+  messageListeners.add(cb);
+  return () => { messageListeners.delete(cb); };
+}
+
+async function sendTokenToServer() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token || localStorage.getItem(SYNCED_KEY) === token || !isOnline()) return;
+  try {
+    await postG37Push({ op: "save", token, platform: "android" });
+    localStorage.setItem(SYNCED_KEY, token);
+  } catch (e) {
+    console.warn("Jeton de notification non envoyé (nouvel essai au retour du réseau)", e);
+  }
+}
+
+async function setupListeners() {
+  if (listenersReady || !pushSupported()) return;
+  listenersReady = true;
+  await PushNotifications.createChannel({
+    id: "g37_alertes", name: "Alertes de l'atelier", description: "Pannes, échéances, messages",
+    importance: 5, visibility: 1, sound: "default", vibration: true, lights: true,
+  }).catch(() => {});
+  await PushNotifications.addListener("registration", (t) => {
+    localStorage.setItem(TOKEN_KEY, t.value);
+    enabledListeners.forEach((l) => l(true));
+    void sendTokenToServer();
+  });
+  await PushNotifications.addListener("pushNotificationReceived", (n) => {
+    messageListeners.forEach((l) => l({ title: n.title, body: n.body, data: n.data as Record<string, string> }));
+  });
+  await PushNotifications.addListener("pushNotificationActionPerformed", (a) => {
+    const tab = (a.notification.data as Record<string, string> | undefined)?.tab;
+    if (tab) window.dispatchEvent(new CustomEvent("g37:open-tab", { detail: tab }));
+  });
+  onOnlineChange((on) => { if (on) void sendTokenToServer(); });
+}
+
+export async function enablePush(): Promise<void> {
+  if (!pushSupported()) throw new Error("Notifications non disponibles sur cet appareil.");
+  await setupListeners();
+  let perm = await PushNotifications.checkPermissions();
+  if (perm.receive === "prompt" || perm.receive === "prompt-with-rationale") perm = await PushNotifications.requestPermissions();
+  if (perm.receive !== "granted") throw new Error("Notifications refusées.");
+  await PushNotifications.register();
+}
+
+export async function disablePush(): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(SYNCED_KEY);
+  enabledListeners.forEach((l) => l(false));
+  if (token && isOnline()) await postG37Push({ op: "remove", token }).catch(() => {});
+  if (pushSupported()) await PushNotifications.unregister().catch(() => {});
+}
+
+// Au démarrage : si les notifications étaient activées, on se réabonne (le jeton peut changer).
+export async function restorePush() {
+  if (!pushSupported() || !isPushOptedIn()) return;
+  try {
+    await setupListeners();
+    const perm = await PushNotifications.checkPermissions();
+    if (perm.receive === "granted") await PushNotifications.register();
+  } catch (e) {
+    console.warn("Notifications non rétablies", e);
+  }
+}
+
+export function pushTokenForLogout(): string | null {
+  try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
