@@ -9,7 +9,8 @@ import { handleExport } from "./routes/export.ts";
 import { pushSelfTest } from "./lib/push.ts";
 import { handleCallSignal, handleDevice, handleDms, handleRelay, handleSecrets } from "./routes/p2p.ts";
 import { db } from "./lib/db.ts";
-import { handleCron, handleManual, handlePush, handleUpload, handleUserRole, handleUsers, handleVersion } from "./routes/misc.ts";
+import { handleAvatarUpload, handleCron, handleManual, handlePush, handleUpload, handleUserRole, handleUsers, handleVersion } from "./routes/misc.ts";
+import { handleCallRoom, handleCallRooms } from "./routes/calls.ts";
 
 type Handler = (request: Request) => Promise<Response>;
 
@@ -41,6 +42,9 @@ const ROUTES: Record<string, Handler> = {
   "POST g37/relay": handleRelay,
   "GET g37/dms": handleDms,
   "POST g37/call_signal": handleCallSignal,
+  "POST g37/call_room": handleCallRoom,
+  "GET g37/call_rooms": handleCallRooms,
+  "POST g37/avatar_upload": handleAvatarUpload,
   "GET users": handleUsers,
   "POST userRole": handleUserRole,
   "GET app/version": () => handleVersion(),

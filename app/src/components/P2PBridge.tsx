@@ -7,7 +7,9 @@ import { useOnline } from "../lib/net";
 import { realtime } from "../lib/realtime";
 import { flushRelay, getSecrets, processInbox, refreshSecrets, registerDevice, startP2P, stopP2P } from "../lib/p2p";
 import { refreshDms } from "../lib/dms";
-import { onInternetSignal, setCallIdentity } from "../lib/calls";
+import { checkRinging, declineFromNotification, handleLaunchCall, onInternetSignal, setCallIdentity } from "../lib/calls";
+import { Nearby, nativeSoundsAvailable, type LaunchData } from "../lib/nearby";
+import { applySoundPrefs } from "../lib/sounds";
 
 // Fait tourner en fond : synchro sans Internet, messages privés, appels entrants.
 export const P2PBridge = () => {
@@ -42,6 +44,33 @@ export const P2PBridge = () => {
   }, [myId, pending, online, queryClient]);
 
   useEffect(() => () => { void stopP2P(); }, []);
+
+  // Sonneries choisies, ouverture depuis une notification (onglet, appel à afficher ou à prendre).
+  useEffect(() => {
+    if (!myId) return;
+    let off: { remove: () => Promise<void> } | null = null;
+    const handle = (l?: LaunchData) => {
+      if (!l) return;
+      if (l.call?.room) void handleLaunchCall(l.call);
+      else if (l.tab) window.dispatchEvent(new CustomEvent("g37:open-tab", { detail: l.tab }));
+    };
+    (async () => {
+      await applySoundPrefs();
+      if (!(await nativeSoundsAvailable())) return;
+      off = await Nearby.addListener("launch", handle);
+      const r = await Nearby.consumeLaunch().catch(() => ({} as { launch?: LaunchData; declined?: string }));
+      if (r.declined) void declineFromNotification(r.declined);
+      handle(r.launch);
+    })().catch(() => {});
+    return () => { void off?.remove(); };
+  }, [myId]);
+
+  // Avec Internet : un collègue m'appelle-t-il en ce moment ?
+  useEffect(() => {
+    if (!myId || !online) return;
+    const id = setTimeout(() => void checkRinging(), 1500);
+    return () => clearTimeout(id);
+  }, [myId, online]);
 
   // Actions de collègues portées par ce téléphone : envoi régulier quand Internet est là.
   useEffect(() => {

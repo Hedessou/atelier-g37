@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { deviceIdSync } from "./crypto";
 import { Capacitor } from "@capacitor/core";
 import { Network } from "@capacitor/network";
 import { API_BASE, BUNDLE_VERSION } from "./config";
@@ -46,6 +47,8 @@ export function installNetwork() {
     const token = session.token();
     if (token) headers.set("x-g37-token", token);
     headers.set("x-app-version", BUNDLE_VERSION);
+    const device = deviceIdSync();
+    if (device) headers.set("x-g37-device", device);
     const target = API_BASE + url.slice("/_api/".length);
     try {
       const res = await original(target, {

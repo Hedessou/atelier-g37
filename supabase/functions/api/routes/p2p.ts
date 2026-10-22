@@ -12,7 +12,6 @@ import { json, readSuperjson, sj } from "../lib/http.ts";
 import { broadcastChanged, broadcastTo } from "../lib/supa.ts";
 import { callTopic, groupKey, serverSignKeys, verifyDeviceSig } from "../lib/p2pKeys.ts";
 import { applyOnce, loadMe } from "./mutate.ts";
-import { notifyUsers } from "../lib/notify.ts";
 
 const jwkSchema = z.object({ kty: z.literal("EC"), crv: z.literal("P-256"), x: z.string().min(20).max(80), y: z.string().min(20).max(80) }).passthrough();
 
@@ -113,10 +112,5 @@ export async function handleCallSignal(request: Request): Promise<Response> {
   const exists = await sql`SELECT id FROM users WHERE id = ${to}`;
   if (!exists.length) return json({ error: "Collègue introuvable" }, 404);
   await broadcastTo(await callTopic(to), "signal", { from: user.id, fromName: user.displayName, data });
-  if (data.type === "offer") {
-    const callId = String(data.callId ?? "").slice(0, 60);
-    if (callId) await sql`INSERT INTO call_log (id, from_user, to_user, via) VALUES (${callId}, ${user.id}, ${to}, 'internet') ON CONFLICT (id) DO NOTHING`;
-    await notifyUsers({ userIds: [to], tag: `appel-${user.id}`, title: `Appel de ${user.displayName}`, body: "Ouvre l'app pour répondre", data: { tab: "messages", call: user.id } });
-  }
   return json({ ok: true });
 }

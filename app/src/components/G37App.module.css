@@ -246,3 +246,13 @@
   .assistantPanel { right: 8px; bottom: 8px; width: calc(100vw - 16px); height: min(700px, calc(100vh - 16px)); }
 }
 
+
+/* En-tête « Spinning R/F » : nom de l'utilisateur en petit, bouton profil */
+.brandName { font-size: 1.15rem; font-weight: 700; letter-spacing: 0.01em; }
+.brandAuthor { display: inline-flex; align-items: center; gap: 4px; font-size: 0.7rem; color: var(--g-dim); max-width: 60vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.meBtn { width: 40px; height: 40px; border-radius: 20px; border: 2px solid var(--g-line); background: #2b4566; color: var(--g-ink); padding: 0; overflow: hidden; cursor: pointer; font-weight: 600; font-size: 0.8rem; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.meBtn img { width: 100%; height: 100%; object-fit: cover; }
+.moreItem { position: relative; }
+.moreItem .navBadge { position: absolute; top: 6px; right: 10px; }
+.moreDanger { color: #fca5a5; }
+.moreDanger svg { color: #ef4444; }

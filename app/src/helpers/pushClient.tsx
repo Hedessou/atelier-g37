@@ -3,6 +3,7 @@ import { PushNotifications } from "@capacitor/push-notifications";
 import { postG37Push } from "../endpoints/g37/push_POST.schema";
 import { PUSH_ENABLED } from "../lib/config";
 import { isOnline, onOnlineChange } from "../lib/net";
+import { nativeSoundsAvailable } from "../lib/nearby";
 
 // Notifications Android (Firebase). Même interface que l'ancienne version web :
 // enablePush, disablePush, isPushOptedIn, onPushEnabledChange, onPushMessage.
@@ -31,10 +32,13 @@ export function onPushMessage(cb: (p: { title?: string; body?: string; data?: Re
 
 async function sendTokenToServer() {
   const token = localStorage.getItem(TOKEN_KEY);
-  if (!token || localStorage.getItem(SYNCED_KEY) === token || !isOnline()) return;
+  // « android3 » : le téléphone fait sonner lui-même (sonnerie choisie, écran d'appel même app fermée).
+  const platform = (await nativeSoundsAvailable()) ? "android3" : "android";
+  const synced = `${platform}:${token}`;
+  if (!token || localStorage.getItem(SYNCED_KEY) === synced || !isOnline()) return;
   try {
-    await postG37Push({ op: "save", token, platform: "android" });
-    localStorage.setItem(SYNCED_KEY, token);
+    await postG37Push({ op: "save", token, platform });
+    localStorage.setItem(SYNCED_KEY, synced);
   } catch (e) {
     console.warn("Jeton de notification non envoyé (nouvel essai au retour du réseau)", e);
   }
@@ -53,7 +57,8 @@ async function setupListeners() {
     void sendTokenToServer();
   });
   await PushNotifications.addListener("pushNotificationReceived", (n) => {
-    messageListeners.forEach((l) => l({ title: n.title, body: n.body, data: n.data as Record<string, string> }));
+    const data = (n.data ?? {}) as Record<string, string>;
+    messageListeners.forEach((l) => l({ title: n.title ?? data.title, body: n.body ?? data.body, data }));
   });
   await PushNotifications.addListener("pushNotificationActionPerformed", (a) => {
     const tab = (a.notification.data as Record<string, string> | undefined)?.tab;

@@ -4,7 +4,8 @@ import type { OutputType as State } from "../endpoints/g37/state_GET.schema";
 import type { InputType } from "../endpoints/g37/mutate_POST.schema";
 import { g37 } from "../helpers/g37";
 import { markRead, sendDm, unreadFrom, useDms, type Dm } from "../lib/dms";
-import { callLog, onCallState, startCall, type CallLog } from "../lib/calls";
+import { callLog, joinRoom, listActiveRooms, MAX_PARTICIPANTS, onCallState, startCall, startGroupCall, type CallLog, type RoomInfo } from "../lib/calls";
+import { PeoplePicker } from "./PeoplePicker";
 import { getPeers, peersChanged, type Peer } from "../lib/p2p";
 import { useOnline } from "../lib/net";
 import styles from "./MessagesView.module.css";
@@ -60,6 +61,18 @@ export const MessagesView = ({ state, lang, save, renderGroup, segment, onSegmen
   const calls = useCallLog();
   const [view, setView] = useState<{ kind: "list" } | { kind: "group" } | { kind: "dm"; peerId: number } | { kind: "new" }>({ kind: "list" });
   const [search, setSearch] = useState("");
+  const [picking, setPicking] = useState(false);
+  const [rooms, setRooms] = useState<RoomInfo[]>([]);
+  // Appels de groupe en cours (on peut les rejoindre).
+  useEffect(() => {
+    if (segment !== "calls" || !online) return;
+    let alive = true;
+    const load = () => void listActiveRooms().then((r) => { if (alive) setRooms(r); }).catch(() => {});
+    load();
+    const id = setInterval(load, 10000);
+    const off = onCallState(() => setTimeout(load, 1500));
+    return () => { alive = false; clearInterval(id); off(); };
+  }, [segment, online]);
 
   const users = useMemo(() => state.users.filter((u) => u.id !== me.id), [state.users, me.id]);
   const userById = useMemo(() => new Map(state.users.map((u) => [u.id, u])), [state.users]);
@@ -104,9 +117,10 @@ export const MessagesView = ({ state, lang, save, renderGroup, segment, onSegmen
 
   const Avatar = ({ id, name, big }: { id: number; name: string; big?: boolean }) => {
     const p = presence(id);
+    const photo = userById.get(id)?.avatarUrl;
     return (
       <span className={`${styles.avatar} ${big ? styles.avatarBig : ""}`} style={{ background: avatarBg(id) }}>
-        {initials(name)}
+        {photo ? <img className={styles.avatarImg} src={photo} alt="" /> : initials(name)}
         {p && <span className={`${styles.presence} ${p === "near" ? styles.presenceNear : styles.presenceOnline}`} aria-label={p === "near" ? t("À portée", "Nearby") : t("En ligne", "Online")} />}
       </span>
     );
@@ -223,10 +237,36 @@ export const MessagesView = ({ state, lang, save, renderGroup, segment, onSegmen
         </>
       ) : (
         <div className={styles.list}>
+          <button className={styles.groupCard} onClick={() => setPicking(true)}>
+            <span className={styles.groupMarkBig}><GroupIcon /></span>
+            <span className={styles.rowText}>
+              <strong>{t("Nouvel appel de groupe", "New group call")}</strong>
+              <span className={styles.preview}>{t(`Jusqu'à ${MAX_PARTICIPANTS} personnes · par Internet`, `Up to ${MAX_PARTICIPANTS} people · over Internet`)}</span>
+            </span>
+          </button>
+          {rooms.filter((r) => r.members.some((m) => m.status === "in") && !r.members.some((m) => m.userId === me.id && m.status === "in")).map((r) => {
+            const inCall = r.members.filter((m) => m.status === "in");
+            const host = r.members.find((m) => m.userId === r.createdBy)?.name ?? "";
+            return (
+              <div key={r.id} className={styles.row}>
+                <span className={styles.rowMain} style={{ cursor: "default" }}>
+                  <span className={styles.groupMark}><GroupIcon /></span>
+                  <span className={styles.rowText}>
+                    <strong>{r.group ? t("Appel de groupe en cours", "Group call in progress") : t("Appel en cours", "Call in progress")}</strong>
+                    <span className={styles.preview}>{inCall.map((m) => m.name.split(" ")[0]).join(", ")} · {inCall.length}/{MAX_PARTICIPANTS}{host ? ` · ${t("lancé par", "started by")} ${host}` : ""}</span>
+                  </span>
+                </span>
+                <button className={styles.joinBtn} onClick={() => void joinRoom(r.id, { group: r.group, inviterId: r.createdBy, inviterName: host }).catch((e) => toast.error(e instanceof Error ? e.message : t("Impossible de rejoindre", "Unable to join")))}>
+                  {t("Rejoindre", "Join")}
+                </button>
+              </div>
+            );
+          })}
+          <div className={styles.section}>{t("Historique", "History")}</div>
           {calls.map((c) => (
             <div key={c.id} className={styles.row}>
               <span className={styles.rowMain} style={{ cursor: "default" }}>
-                <Avatar id={c.peerId} name={c.peerName} />
+                {c.group ? <span className={styles.groupMark}><GroupIcon /></span> : <Avatar id={c.peerId} name={c.peerName} />}
                 <span className={styles.rowText}>
                   <span className={styles.rowTop}><strong>{c.peerName}</strong><span className={styles.time}>{fmtTime(c.at)}</span></span>
                   <span className={`${styles.preview} ${c.status === "missed" ? styles.previewMissed : ""}`}>
@@ -235,12 +275,25 @@ export const MessagesView = ({ state, lang, save, renderGroup, segment, onSegmen
                   </span>
                 </span>
               </span>
-              <button className={styles.callBtn} aria-label={t(`Rappeler ${c.peerName}`, `Call back ${c.peerName}`)} onClick={() => void call(c.peerId, c.peerName)}><PhoneIcon /></button>
+              {!c.group && c.peerId > 0 && <button className={styles.callBtn} aria-label={t(`Rappeler ${c.peerName}`, `Call back ${c.peerName}`)} onClick={() => void call(c.peerId, c.peerName)}><PhoneIcon /></button>}
             </div>
           ))}
           {!calls.length && <div className={styles.empty}>{t("Aucun appel pour l'instant.", "No calls yet.")}</div>}
         </div>
       )}
+      <PeoplePicker
+        open={picking}
+        onOpenChange={setPicking}
+        people={users}
+        max={MAX_PARTICIPANTS - 1}
+        title={t("Appel de groupe", "Group call")}
+        confirmLabel={t("Appeler", "Call")}
+        onConfirm={(ids) => {
+          const people = ids.map((id) => ({ userId: id, name: userById.get(id)?.displayName ?? "Collègue" }));
+          const go = people.length === 1 ? startCall(people[0].userId, people[0].name) : startGroupCall(people);
+          void go.catch((e) => toast.error(e instanceof Error ? e.message : t("Appel impossible", "Call failed")));
+        }}
+      />
     </div>
   );
 };

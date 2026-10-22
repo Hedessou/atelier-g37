@@ -295,6 +295,15 @@ export function applyLocal(state: State, op: Pick<Op, "opId" | "clientAt" | "inp
       if (!need("stockManage")) return state;
       s.stock = s.stock.filter((x) => x.id !== input.id);
       return s;
+    case "profileInfo": {
+      const full = [input.firstName.trim(), input.lastName.trim()].filter(Boolean).join(" ");
+      const patchUser = <T extends { id: number; displayName: string }>(u: T): T => u.id === me.id
+        ? { ...u, firstName: input.firstName || null, lastName: input.lastName || null, postTitle: input.postTitle || null, ...(full ? { displayName: full } : {}) }
+        : u;
+      s.users = s.users.map(patchUser);
+      s.me = patchUser(s.me);
+      return s;
+    }
     default:
       // Actions d'administration : visibles après la synchronisation.
       return state;

@@ -14,6 +14,11 @@ export type G37User = {
   team: string | null;
   pending: boolean;
   lastSeen: Date | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  postTitle?: string | null;
+  avatarUrl?: string | null;
+  lastSyncAt?: Date | null;
 };
 
 export type G37Machine = {
@@ -95,6 +100,7 @@ export type G37ChatMessage = {
 export type OutputType = {
   // Heure du serveur au moment du chargement, et présence du manuel indexé pour l'IA.
   serverTime?: Date;
+  lastChangeAt?: Date | string | null;
   manualReady?: boolean;
   me: G37User;
   users: G37User[];
