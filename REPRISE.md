@@ -55,8 +55,9 @@ Copie tout le bloc ci-dessous dans la nouvelle conversation, avec le zip `atelie
 
 ## Ce qu'il reste à faire (dans l'ordre)
 
-1. Vérifier que la fonction `api` déployée est bien la v3 (elle doit répondre à `GET /functions/v1/api/_api/g37/secrets`
-   avec 401 sans session, pas 404). Sinon la déployer depuis `supabase/functions/api/` (tous les fichiers en un appel).
+1. ✅ FAIT le 22/10/2026 : la fonction `api` v3 est déployée et testée (secrets, état signé + signature vérifiée,
+   enregistrement d'un téléphone, messages privés, appels → toutes les routes répondent). Rien à refaire côté serveur.
+   Reste du test : une ligne `user_devices` « d_testv3_000001 » (utilisateur de test 31) à supprimer.
 2. `cd app && npm install && npx tsc --noEmit` → corriger les erreurs de types éventuelles.
 3. `npm run build`, puis `BUNDLE_VERSION=2.0.0 bash scripts/prepare-android.sh`, puis compiler :
    `cd android && ./gradlew assembleRelease` (Termux) ou pousser sur GitHub (workflow `.github/workflows/android.yml`,
