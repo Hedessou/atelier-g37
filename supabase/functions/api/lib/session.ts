@@ -1,8 +1,5 @@
 import { db } from "./db.ts";
 
-// Sessions du téléphone : un jeton aléatoire envoyé dans l'en-tête x-g37-token.
-// Seule son empreinte SHA-256 est stockée en base. Longue durée (180 jours, prolongée à chaque usage)
-// pour que l'app reste connectée même après de longues périodes hors ligne.
 export const SESSION_DAYS = 180;
 
 export class NotAuthenticatedError extends Error {
@@ -12,13 +9,7 @@ export class NotAuthenticatedError extends Error {
   }
 }
 
-export type SessionUser = {
-  id: number;
-  email: string;
-  displayName: string;
-  avatarUrl: string | null;
-  role: "admin" | "user";
-};
+export type SessionUser = { id: number; email: string; displayName: string; avatarUrl: string | null; role: "admin" | "user" };
 
 export async function sha256(text: string): Promise<string> {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -42,12 +33,8 @@ export async function createSession(userId: number, deviceLabel: string | null):
   const token = `g37_${randomToken()}`;
   const now = new Date();
   await db.insertInto("appSessions").values({
-    tokenHash: await sha256(token),
-    userId,
-    deviceLabel: deviceLabel?.slice(0, 120) ?? null,
-    createdAt: now,
-    lastSeen: now,
-    expiresAt: new Date(now.getTime() + SESSION_DAYS * 86400000),
+    tokenHash: await sha256(token), userId, deviceLabel: deviceLabel?.slice(0, 120) ?? null,
+    createdAt: now, lastSeen: now, expiresAt: new Date(now.getTime() + SESSION_DAYS * 86400000),
   }).execute();
   await db.updateTable("users").set({ lastSeen: now }).where("id", "=", userId).execute();
   return token;
@@ -59,25 +46,14 @@ export async function getServerUserSession(request: Request): Promise<{ user: Se
   const hash = await sha256(token);
   const row = await db.selectFrom("appSessions")
     .innerJoin("users", "users.id", "appSessions.userId")
-    .select([
-      "appSessions.tokenHash", "appSessions.lastSeen as sessionSeen", "appSessions.expiresAt",
-      "users.id", "users.email", "users.displayName", "users.avatarUrl", "users.role",
-    ])
+    .select(["appSessions.tokenHash", "appSessions.lastSeen as sessionSeen", "appSessions.expiresAt", "users.id", "users.email", "users.displayName", "users.avatarUrl", "users.role"])
     .where("appSessions.tokenHash", "=", hash)
     .executeTakeFirst();
   if (!row || new Date(row.expiresAt).getTime() < Date.now()) throw new NotAuthenticatedError();
-
-  // Mise à jour de la présence au plus toutes les 5 minutes (évite une écriture à chaque requête).
   const now = new Date();
   if (now.getTime() - new Date(row.sessionSeen).getTime() > 5 * 60000) {
-    await db.updateTable("appSessions")
-      .set({ lastSeen: now, expiresAt: new Date(now.getTime() + SESSION_DAYS * 86400000) })
-      .where("tokenHash", "=", hash).execute();
+    await db.updateTable("appSessions").set({ lastSeen: now, expiresAt: new Date(now.getTime() + SESSION_DAYS * 86400000) }).where("tokenHash", "=", hash).execute();
     await db.updateTable("users").set({ lastSeen: now }).where("id", "=", row.id).execute();
   }
-
-  return {
-    user: { id: row.id, email: row.email, displayName: row.displayName, avatarUrl: row.avatarUrl, role: row.role },
-    session: { id: hash },
-  };
+  return { user: { id: row.id, email: row.email, displayName: row.displayName, avatarUrl: row.avatarUrl, role: row.role }, session: { id: hash } };
 }

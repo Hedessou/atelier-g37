@@ -21,7 +21,12 @@ npx @capacitor/assets generate --android \
 # Firebase (notifications) si fourni
 if [ -n "${GOOGLE_SERVICES_JSON:-}" ]; then
   printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
-  echo "google-services.json ajouté"
+  echo "google-services.json ajouté (secret)"
+elif [ -f google-services.json ]; then
+  cp google-services.json android/app/google-services.json
+  echo "google-services.json ajouté (fichier app/google-services.json)"
+else
+  echo "ATTENTION : pas de google-services.json, les notifications ne marcheront pas"
 fi
 
 npx cap sync android

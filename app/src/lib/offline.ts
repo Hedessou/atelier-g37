@@ -15,8 +15,10 @@ import { isOnline } from "./net";
 
 const STATE_KEY = "g37.state";
 const OUTBOX_KEY = "g37.outbox";
+const RELAY_KEY = "g37.relay";
 
-export type Op = { opId: string; clientAt: string; input: InputType; tries?: number };
+// signed : copie signée par ce téléphone, pour qu'un collègue puisse la porter au serveur (mode sans Internet).
+export type Op = { opId: string; clientAt: string; input: InputType; tries?: number; signed?: { payload: string; sig: string } };
 export type SyncResult = { sent: number; messages: string[]; errors: string[] };
 
 type Listener = () => void;
@@ -63,6 +65,62 @@ export function outbox(): Op[] {
 function setOutbox(ops: Op[]) {
   localStorage.setItem(OUTBOX_KEY, superjson.stringify(ops));
   emit();
+}
+
+// Ajoute les signatures calculées (sans toucher aux actions ajoutées entre-temps).
+export function setOutboxSignatures(sigs: Map<string, { payload: string; sig: string }>) {
+  if (!sigs.size) return;
+  setOutbox(outbox().map((o) => (sigs.has(o.opId) ? { ...o, signed: sigs.get(o.opId) } : o)));
+}
+
+// Actions déjà appliquées par le serveur (apportées par un collègue) : retirées de la file.
+export function dropFromOutbox(ids: Set<string>) {
+  const ops = outbox();
+  const rest = ops.filter((o) => !ids.has(o.opId));
+  if (rest.length !== ops.length) setOutbox(rest);
+}
+
+// ---- Actions de collègues portées par ce téléphone (relais sans Internet) ----
+export type RelayOp = {
+  payload: string; sig: string; opId: string; userId: number; deviceId: string; name: string;
+  clientAt: string; input: InputType; verified: boolean; receivedAt: string;
+};
+const relayListeners = new Set<Listener>();
+export function onRelayChange(l: Listener) {
+  relayListeners.add(l);
+  return () => relayListeners.delete(l);
+}
+export function relayOps(): RelayOp[] {
+  try {
+    const raw = localStorage.getItem(RELAY_KEY);
+    return raw ? (JSON.parse(raw) as RelayOp[]) : [];
+  } catch {
+    return [];
+  }
+}
+function setRelay(ops: RelayOp[]) {
+  // 30 jours maximum, 1500 actions au plus.
+  const limit = Date.now() - 30 * 86400000;
+  const kept = ops.filter((o) => new Date(o.receivedAt).getTime() > limit).slice(-1500);
+  try {
+    localStorage.setItem(RELAY_KEY, JSON.stringify(kept));
+  } catch (e) {
+    console.warn("Relais non gardé :", e);
+  }
+  relayListeners.forEach((l) => l());
+}
+export function addRelayOps(list: RelayOp[]): RelayOp[] {
+  if (!list.length) return [];
+  const current = relayOps();
+  const known = new Set(current.map((o) => o.opId));
+  const added = list.filter((o) => !known.has(o.opId));
+  if (added.length) setRelay([...current, ...added]);
+  return added;
+}
+export function removeRelayOps(ids: Set<string>) {
+  const current = relayOps();
+  const rest = current.filter((o) => !ids.has(o.opId));
+  if (rest.length !== current.length) setRelay(rest);
 }
 
 export function enqueue(input: InputType): Op {
@@ -122,11 +180,11 @@ type Me = State["me"];
 const machineIdOf = (no: number) => "M-" + String(no).padStart(2, "0");
 const dayOf = (d: Date) => new Date(d.getTime() + 3600000).toISOString().slice(0, 10);
 
-export function applyLocal(state: State, op: Op): State {
+export function applyLocal(state: State, op: Pick<Op, "opId" | "clientAt" | "input">, actor?: Me): State {
   const s: State = { ...state };
   const input = op.input;
   const now = new Date(op.clientAt);
-  const me: Me = s.me;
+  const me: Me = actor ?? s.me;
   const need = (p: Parameters<typeof g37.can>[0]) => g37.can(p, me);
   const localId = `local-${op.opId}`;
 
@@ -243,7 +301,17 @@ export function applyLocal(state: State, op: Op): State {
   }
 }
 
-// Données du serveur + actions encore en attente sur ce téléphone.
+// Données du serveur + actions de collègues reçues sans Internet + actions encore en attente sur ce téléphone.
 export function withPending(state: State): State {
-  return outbox().reduce((acc, op) => applyLocal(acc, op), state);
+  const applied = new Set(state.appliedOpIds ?? []);
+  const relayed = relayOps()
+    .filter((o) => o.verified && !applied.has(o.opId) && o.userId !== state.me.id)
+    .sort((a, b) => a.clientAt.localeCompare(b.clientAt));
+  let acc = state;
+  for (const o of relayed) {
+    const u = state.users.find((x) => x.id === o.userId);
+    const actor: Me = u ? { ...u } : { ...state.me, id: o.userId, displayName: o.name, role: "user", jobRole: "helper", pending: false };
+    acc = applyLocal(acc, o, actor);
+  }
+  return outbox().filter((o) => !applied.has(o.opId)).reduce((a, op) => applyLocal(a, op), acc);
 }

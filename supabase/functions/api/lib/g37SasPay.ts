@@ -1,5 +1,3 @@
-// Client serveur SasPay (https://docs.saspay.me) — paiement mobile money direct (softpay).
-// La clé secrète reste côté serveur (secret SASPAY_SECRET_KEY, jamais dans l'app).
 const BASE = "https://api.saspay.me/api/v1";
 
 function secretKey(): string {
@@ -11,12 +9,7 @@ function secretKey(): string {
 class SasPayError extends Error {
   code: string | null;
   status: number;
-  constructor(message: string, code: string | null, status: number) {
-    super(message);
-    this.name = "SasPayError";
-    this.code = code;
-    this.status = status;
-  }
+  constructor(message: string, code: string | null, status: number) { super(message); this.name = "SasPayError"; this.code = code; this.status = status; }
 }
 
 // deno-lint-ignore no-explicit-any
@@ -42,13 +35,8 @@ async function call(path: string, init: RequestInit & { auth?: boolean; idempote
 }
 
 const COUNTRIES = [
-  { code: "TG", name: "Togo", dial: "228" },
-  { code: "BJ", name: "Bénin", dial: "229" },
-  { code: "CI", name: "Côte d'Ivoire", dial: "225" },
-  { code: "BF", name: "Burkina Faso", dial: "226" },
-  { code: "SN", name: "Sénégal", dial: "221" },
-  { code: "ML", name: "Mali", dial: "223" },
-  { code: "NE", name: "Niger", dial: "227" },
+  { code: "TG", name: "Togo", dial: "228" }, { code: "BJ", name: "Bénin", dial: "229" }, { code: "CI", name: "Côte d'Ivoire", dial: "225" },
+  { code: "BF", name: "Burkina Faso", dial: "226" }, { code: "SN", name: "Sénégal", dial: "221" }, { code: "ML", name: "Mali", dial: "223" }, { code: "NE", name: "Niger", dial: "227" },
 ] as const;
 
 function normalizePhone(country: string, raw: string): string {
@@ -81,25 +69,14 @@ async function networks(country: string): Promise<Array<{ code: string; name: st
   return out;
 }
 
-async function softpay(input: {
-  amount: number; country: string; network: string; phone: string; email: string; name: string;
-  description: string; otp: string | null; returnUrl: string | null;
-  metadata: Record<string, string | number>; idempotencyKey: string;
-}): Promise<{ id: string; status: string; checkoutUrl: string | null }> {
+async function softpay(input: { amount: number; country: string; network: string; phone: string; email: string; name: string; description: string; otp: string | null; returnUrl: string | null; metadata: Record<string, string | number>; idempotencyKey: string }): Promise<{ id: string; status: string; checkoutUrl: string | null }> {
   const [first, ...rest] = input.name.trim().split(/\s+/);
   const data = await call("/payments/softpay/", {
-    method: "POST",
-    idempotencyKey: input.idempotencyKey,
+    method: "POST", idempotencyKey: input.idempotencyKey,
     body: JSON.stringify({
-      amount: input.amount.toFixed(2),
-      currency: "XOF",
-      country: input.country,
-      network: input.network,
-      description: input.description,
+      amount: input.amount.toFixed(2), currency: "XOF", country: input.country, network: input.network, description: input.description,
       customer: { email: input.email, first_name: first || "Client", last_name: rest.join(" ") || "G37", phone: input.phone },
-      ...(input.otp ? { otp: input.otp } : {}),
-      ...(input.returnUrl ? { return_url: input.returnUrl } : {}),
-      metadata: input.metadata,
+      ...(input.otp ? { otp: input.otp } : {}), ...(input.returnUrl ? { return_url: input.returnUrl } : {}), metadata: input.metadata,
     }),
   });
   if (!data?.id) throw new SasPayError("Réponse SasPay incomplète (paiement).", null, 502);

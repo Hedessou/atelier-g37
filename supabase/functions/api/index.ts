@@ -1,5 +1,4 @@
 // Serveur de l'app Atelier G37 (Supabase Edge Function « api »).
-// Adresse : https://<projet>.supabase.co/functions/v1/api/<route>
 import { CORS, json, withCors } from "./lib/http.ts";
 import { handleChangePassword, handleLogin, handleLogout, handleRegister, handleSession } from "./routes/auth.ts";
 import { handleState } from "./routes/state.ts";
@@ -7,6 +6,9 @@ import { handleMutate, handleSync } from "./routes/mutate.ts";
 import { handleCalc, handlePayments, handlePaymentDecide, handlePayNetworks, handleQuota, handleSubscribe, handleUserLimits } from "./routes/billing.ts";
 import { handleAssistant } from "./routes/assistant.ts";
 import { handleExport } from "./routes/export.ts";
+import { pushSelfTest } from "./lib/push.ts";
+import { handleCallSignal, handleDevice, handleDms, handleRelay, handleSecrets } from "./routes/p2p.ts";
+import { db } from "./lib/db.ts";
 import { handleCron, handleManual, handlePush, handleUpload, handleUserRole, handleUsers, handleVersion } from "./routes/misc.ts";
 
 type Handler = (request: Request) => Promise<Response>;
@@ -34,10 +36,21 @@ const ROUTES: Record<string, Handler> = {
   "POST g37/push": handlePush,
   "GET g37/manual_status": handleManual,
   "POST g37/manual_import": handleManual,
+  "POST g37/device": handleDevice,
+  "GET g37/secrets": handleSecrets,
+  "POST g37/relay": handleRelay,
+  "GET g37/dms": handleDms,
+  "POST g37/call_signal": handleCallSignal,
   "GET users": handleUsers,
   "POST userRole": handleUserRole,
   "GET app/version": () => handleVersion(),
   "POST cron/due": handleCron,
+  "POST push/selftest": async (request: Request) => {
+    const key = request.headers.get("x-cron-key") ?? "";
+    const row = await db.selectFrom("appConfig").select("value").where("key", "=", "cron.key").executeTakeFirst();
+    if (!row || !key || key !== row.value) return json({ error: "forbidden" }, 403);
+    return json(await pushSelfTest());
+  },
   "GET health": () => Promise.resolve(json({ ok: true, at: new Date().toISOString() })),
 };
 

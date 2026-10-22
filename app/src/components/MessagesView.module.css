@@ -1,0 +1,94 @@
+/* Messagerie — look A « Atelier de nuit » (variables héritées de .app dans G37App.module.css) */
+.wrap { display: flex; flex-direction: column; gap: 12px; padding-top: 16px; }
+.head { display: flex; align-items: center; gap: 8px; }
+.h1 { margin: 0; font-size: 1.6rem; font-weight: 700; flex: 1; }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+.primaryBtn, .iconBtn, .callBtn {
+  width: 44px; height: 44px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 12px; cursor: pointer;
+}
+.primaryBtn { border: 0; background: var(--g-accent); color: var(--g-accent-ink); }
+.iconBtn { border: 1px solid var(--g-line); background: var(--g-surface); color: var(--g-ink); }
+.callBtn { border: 1px solid var(--g-line); background: transparent; color: var(--g-ink); border-radius: 22px; }
+.primaryBtn svg, .iconBtn svg, .callBtn svg { width: 20px; height: 20px; }
+
+.tabs { padding: 4px; border-radius: 12px; background: var(--g-surface); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.tab, .tabOn { height: 38px; border-radius: 9px; border: 0; font: inherit; font-size: 0.85rem; cursor: pointer; }
+.tab { background: transparent; color: var(--g-dim); }
+.tabOn { background: #24364f; color: var(--g-ink); font-weight: 600; }
+
+.banner {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 14px; border-radius: 12px;
+  background: #142b3d; border: 1px solid #1f4a66; color: #bfe3ff; font-size: 0.82rem;
+}
+.banner svg { width: 18px; height: 18px; flex: none; color: var(--g-info); margin-top: 1px; }
+
+.groupCard {
+  display: flex; gap: 12px; align-items: center; padding: 14px; border-radius: 16px; text-align: left;
+  background: var(--g-surface); border: 1px solid var(--g-line); color: var(--g-ink); font: inherit; cursor: pointer; width: 100%;
+}
+.groupMarkBig, .groupMark {
+  border-radius: 14px; background: var(--g-accent); color: var(--g-accent-ink);
+  display: flex; align-items: center; justify-content: center; flex: none;
+}
+.groupMarkBig { width: 48px; height: 48px; }
+.groupMark { width: 40px; height: 40px; border-radius: 12px; }
+.groupMarkBig svg { width: 24px; height: 24px; }
+.groupMark svg { width: 20px; height: 20px; }
+
+.section { margin-top: 6px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--g-dim); }
+.list { display: flex; flex-direction: column; }
+.row { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-bottom: 1px solid #1f3048; }
+.row:last-child { border-bottom: 0; }
+.rowMain {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; text-align: left;
+  background: none; border: 0; padding: 0; color: var(--g-ink); font: inherit; cursor: pointer; min-height: 44px;
+}
+.rowText { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rowText strong { font-size: 0.95rem; }
+.rowText > span:not(.rowTop) { font-size: 0.8rem; color: var(--g-dim); }
+.rowTop { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.time { font-family: var(--font-family-monospace, monospace); font-size: 0.72rem; color: var(--g-dim); white-space: nowrap; }
+.preview { font-size: 0.82rem; color: #c7d3e2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.previewPending { color: #93c5fd; }
+.previewMissed { color: #fca5a5; }
+.unread {
+  min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; flex: none;
+  background: var(--g-accent); color: var(--g-accent-ink); font-size: 0.72rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.empty { border: 1px dashed var(--g-line); border-radius: 14px; padding: 18px; text-align: center; color: var(--g-dim); font-size: 0.85rem; }
+
+.avatar {
+  position: relative; width: 44px; height: 44px; border-radius: 22px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; font-weight: 600; font-size: 0.85rem; color: #e8eef6;
+}
+.avatarBig { width: 56px; height: 56px; border-radius: 28px; font-size: 1rem; }
+.presence { position: absolute; right: 0; bottom: 0; width: 12px; height: 12px; border-radius: 6px; border: 2px solid var(--g-bg); }
+.presenceOnline { background: var(--g-ok); }
+.presenceNear { background: var(--g-info); }
+
+.searchBox { display: flex; align-items: center; height: 48px; padding: 0 14px; border-radius: 14px; background: var(--g-surface); border: 1px solid var(--g-line); }
+.searchBox input { flex: 1; border: 0; outline: 0; background: transparent; color: var(--g-ink); font: inherit; font-size: 0.95rem; }
+
+.threadHead { display: flex; align-items: center; gap: 10px; }
+.threadTitle { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.threadTitle strong { font-size: 1rem; }
+.threadTitle span { font-size: 0.78rem; color: var(--g-dim); }
+
+.bubbles { display: flex; flex-direction: column; gap: 8px; min-height: 40vh; padding: 4px 0 8px; }
+.bubbleMine, .bubbleTheirs { max-width: 82%; padding: 9px 12px; border-radius: 14px; font-size: 0.9rem; line-height: 1.4; }
+.bubbleMine { align-self: flex-end; background: var(--g-accent-soft); border: 1px solid #6b5418; border-bottom-right-radius: 4px; }
+.bubbleTheirs { align-self: flex-start; background: var(--g-surface); border: 1px solid var(--g-line); border-bottom-left-radius: 4px; }
+.bubbleText { white-space: pre-wrap; word-break: break-word; }
+.bubbleMeta { margin-top: 4px; font-size: 0.68rem; color: var(--g-dim); }
+
+.composer {
+  position: sticky; bottom: calc(80px + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: flex-end;
+  padding: 8px 0; background: var(--g-bg);
+}
+.composerField { flex: 1; min-width: 0; display: flex; border-radius: 14px; background: var(--g-surface); border: 1px solid var(--g-line); padding: 10px 12px; }
+.composerField textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: var(--g-ink); font: inherit; font-size: 0.95rem; max-height: 120px; }
+.sendBtn { height: 44px; padding: 0 16px; border-radius: 12px; border: 0; background: var(--g-accent); color: var(--g-accent-ink); font: inherit; font-weight: 600; cursor: pointer; }
+.sendBtn:disabled { opacity: 0.5; cursor: default; }

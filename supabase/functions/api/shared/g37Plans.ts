@@ -1,9 +1,6 @@
-// Offres d'abonnement « illimité » (questions IA + calculs). Partagé app / serveur.
 export const g37Plans = {
-  // Seul ce compte (le propriétaire, Hedessou) peut régler les limites gratuites de chaque personne.
   OWNER_USER_ID: 1,
   FREE_PER_DAY: 3,
-  // À partir du lendemain du premier avertissement, hors abonnement.
   FREE_PER_DAY_AFTER_WARNING: 1,
   list: [
     { key: "day", price: 200, days: 1, fr: "1 jour illimité", en: "1 day unlimited" },

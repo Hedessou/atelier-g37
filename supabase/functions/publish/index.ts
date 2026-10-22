@@ -1,7 +1,7 @@
 // Fonction « publish » : appelée uniquement par la fabrication automatique (GitHub Actions)
 // pour déposer une nouvelle version de l'app et l'annoncer aux téléphones.
 //   POST /publish/prepare  { bundleVersion, nativeVersionCode } -> adresses d'envoi des fichiers
-//   POST /publish/commit   { bundleVersion, bundleChecksum, nativeVersionCode, minNativeVersionCode?, notes? }
+//   POST /publish/commit   { bundleVersion, bundleChecksum, nativeVersionCode, minNativeVersionCode?, apkChecksum?, notes? }
 // Protégée par l'en-tête x-publish-key (valeur gardée en base : app_config 'publish.key').
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
@@ -57,6 +57,7 @@ Deno.serve(async (req) => {
     const nativeVersionCode = Number(body.nativeVersionCode);
     if (!Number.isInteger(nativeVersionCode) || nativeVersionCode < 1) return json({ error: "nativeVersionCode invalide" }, 400);
     const minNative = body.minNativeVersionCode == null ? null : Number(body.minNativeVersionCode);
+    const apkChecksum = /^[0-9a-f]{64}$/.test(String(body.apkChecksum ?? "")) ? String(body.apkChecksum) : null;
     await setConfig({
       "app.bundleVersion": bundleVersion,
       "app.bundleUrl": publicUrl(bundlePath(bundleVersion)),
@@ -64,6 +65,7 @@ Deno.serve(async (req) => {
       "app.nativeVersionCode": String(nativeVersionCode),
       "app.minNativeVersionCode": minNative && Number.isInteger(minNative) ? String(minNative) : null,
       "app.apkUrl": publicUrl(apkPath(bundleVersion)),
+      "app.apkChecksum": apkChecksum,
       "app.notes": body.notes ? String(body.notes).slice(0, 500) : null,
     });
     // Ménage : on garde les 5 dernières versions.
