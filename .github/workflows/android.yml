@@ -40,8 +40,11 @@ jobs:
       - name: Construire l'app
         env:
           VITE_BUNDLE_VERSION: ${{ env.BUNDLE_VERSION }}
-          VITE_PUSH_ENABLED: ${{ secrets.GOOGLE_SERVICES_JSON != '' && '1' || '0' }}
-        run: npm run build
+          HAS_GS_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON != '' && '1' || '0' }}
+        run: |
+          if [ "$HAS_GS_SECRET" = "1" ] || [ -f google-services.json ]; then export VITE_PUSH_ENABLED=1; else export VITE_PUSH_ENABLED=0; fi
+          echo "Notifications : $VITE_PUSH_ENABLED"
+          npm run build
 
       - name: Préparer Android
         env:
