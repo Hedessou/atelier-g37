@@ -48,6 +48,7 @@ dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
     implementation project(':capacitor-android')
     implementation "androidx.core:core:$androidxCoreVersion"
+    implementation "androidx.appcompat:appcompat:1.7.0"
     implementation "com.google.android.gms:play-services-nearby:$playServicesNearbyVersion"
     implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
 }
