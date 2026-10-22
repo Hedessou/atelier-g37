@@ -5,6 +5,9 @@ import { AppUpdate, AppUpdateAvailability } from "@capawesome/capacitor-app-upda
 import { BUNDLE_VERSION } from "./config";
 import { isOnline, onOnlineChange } from "./net";
 import { openExternal } from "./links";
+import { Network } from "@capacitor/network";
+import { Nearby, nearbyAvailable } from "./nearby";
+import { getManifest, noteServerVersion, setRunningVersions, updateFromPeer } from "./p2p";
 
 // ---------------------------------------------------------------------------
 // Mises à jour automatiques
@@ -17,11 +20,12 @@ export type UpdateStatus =
   | { kind: "none" }
   | { kind: "downloading"; version: string }
   | { kind: "ready"; version: string; bundleId: string; notes: string | null }
-  | { kind: "native"; required: boolean; apkUrl: string | null; viaStore: boolean; notes: string | null };
+  | { kind: "native"; required: boolean; apkUrl: string | null; viaStore: boolean; notes: string | null; localApk?: string | null };
 
 type VersionInfo = {
   bundleVersion: string | null; bundleUrl: string | null; bundleChecksum: string | null;
   nativeVersionCode: number | null; minNativeVersionCode: number | null; apkUrl: string | null; notes: string | null;
+  manifest?: string; manifestSig?: string;
 };
 
 let status: UpdateStatus = { kind: "none" };
@@ -47,6 +51,11 @@ async function checkForUpdates(force = false) {
     const v = (await res.json()) as VersionInfo;
     const info = await App.getInfo();
     const build = Number(info.build) || 0;
+    const cur = await CapacitorUpdater.current().catch(() => null);
+    setRunningVersions({ bundle: !cur || cur.bundle.version === "builtin" ? BUNDLE_VERSION : cur.bundle.version, build });
+    // Copie gardée pour les collègues sans Internet (l'APK seulement en Wi-Fi).
+    const net = await Network.getStatus().catch(() => null);
+    void noteServerVersion(v, net?.connectionType === "wifi");
 
     // 1. Nouvelle version du moteur Android ?
     if (v.nativeVersionCode && build < v.nativeVersionCode) {
@@ -85,6 +94,29 @@ async function checkForUpdates(force = false) {
 
 export async function initUpdater() {
   if (!Capacitor.isNativePlatform()) return;
+  try {
+    const info = await App.getInfo();
+    const cur = await CapacitorUpdater.current();
+    setRunningVersions({ bundle: cur.bundle.version === "builtin" ? BUNDLE_VERSION : cur.bundle.version, build: Number(info.build) || 0 });
+  } catch { /* versions inconnues pour l'instant */ }
+  // Mise à jour apportée par un collègue (sans Internet), déjà vérifiée avec l'empreinte signée par le serveur.
+  updateFromPeer.on(async (u) => {
+    try {
+      if (u.kind === "bundle") {
+        const { url } = await Nearby.serveFile({ path: u.path, name: "bundle.zip" });
+        const bundle = await CapacitorUpdater.download({ url, version: u.version, checksum: getManifest()?.bundleChecksum ?? undefined });
+        await CapacitorUpdater.next({ id: bundle.id });
+        setStatus({ kind: "ready", version: u.version, bundleId: bundle.id, notes: u.notes });
+      } else {
+        const m = getManifest();
+        const info = await App.getInfo();
+        const build = Number(info.build) || 0;
+        setStatus({ kind: "native", required: !!m?.minNativeVersionCode && build < m.minNativeVersionCode, apkUrl: null, viaStore: false, notes: u.notes, localApk: u.path });
+      }
+    } catch (e) {
+      console.warn("Mise à jour reçue d'un collègue non installée :", e);
+    }
+  });
   // Indique que cette version démarre correctement (sinon retour automatique à la précédente).
   await CapacitorUpdater.notifyAppReady().catch(() => {});
   void checkForUpdates(true);
@@ -109,6 +141,11 @@ export async function installNativeUpdate() {
       await AppUpdate.openAppStore().catch(() => {});
       return;
     }
+  }
+  if (status.localApk && nearbyAvailable()) {
+    const r = await Nearby.installApk({ path: status.localApk });
+    if (r.needsPermission) throw new Error("Autorise « Installer des applications inconnues » pour Atelier G37, puis touche à nouveau Installer.");
+    return;
   }
   if (status.apkUrl) await openExternal(status.apkUrl);
 }

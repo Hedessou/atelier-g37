@@ -4,11 +4,10 @@ export const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "content-type, x-g37-token, x-client-info, apikey, authorization, x-app-version, x-push-token",
-  "Access-Control-Expose-Headers": "content-disposition",
+  "Access-Control-Expose-Headers": "content-disposition, x-g37-sig",
   "Access-Control-Max-Age": "86400",
 };
 
-// Réponse au format superjson (comme sur Floot : le client la lit avec superjson.parse).
 export const sj = (data: unknown, status = 200) =>
   new Response(superjson.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 
@@ -25,7 +24,6 @@ export async function readSuperjson<T = unknown>(request: Request): Promise<T> {
   const text = await request.text();
   try {
     const parsed = JSON.parse(text);
-    // Le client envoie du superjson ({ json, meta }) ; on accepte aussi du JSON simple.
     if (parsed && typeof parsed === "object" && "json" in parsed && Object.keys(parsed).every((k) => k === "json" || k === "meta")) {
       return superjson.parse<T>(text);
     }

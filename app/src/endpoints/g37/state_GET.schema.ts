@@ -111,6 +111,22 @@ export type OutputType = {
   specs: G37Specs[];
   maintenance: G37Maintenance[];
   chat: G37ChatMessage[];
+  // Mode sans Internet : clés publiques des téléphones et actions déjà appliquées par le serveur.
+  devices?: G37Device[];
+  appliedOpIds?: string[];
+};
+
+export type G37Device = { deviceId: string; userId: number; signJwk: JsonWebKey; encJwk: JsonWebKey };
+
+// Données + texte exact signé par le serveur (pour pouvoir les transmettre à un collègue sans Internet).
+export const getG37SignedState = async (): Promise<{ state: OutputType; text: string; sig: string | null }> => {
+  const result = await fetch(`/_api/g37/state`, { method: "GET", headers: { "Content-Type": "application/json" } });
+  const text = await result.text();
+  if (!result.ok) {
+    const errorObject = superjson.parse<{ error: string }>(text);
+    throw new Error(errorObject.error);
+  }
+  return { state: superjson.parse<OutputType>(text), text, sig: result.headers.get("x-g37-sig") };
 };
 
 export const getG37State = async (init?: RequestInit): Promise<OutputType> => {

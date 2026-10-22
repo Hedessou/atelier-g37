@@ -10,8 +10,8 @@ import "@fontsource/ibm-plex-sans/500.css";
 import "@fontsource/ibm-plex-sans/600.css";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
-import "@fontsource/bricolage-grotesque/600.css";
-import "@fontsource/bricolage-grotesque/700.css";
+import "@fontsource/ibm-plex-sans/700.css";
+import "@fontsource/ibm-plex-mono/600.css";
 import "./base.css";
 import { installNetwork } from "./lib/net";
 import { installLinkHandling } from "./lib/links";
@@ -23,6 +23,8 @@ import { TooltipProvider } from "./components/Tooltip";
 import { SonnerToaster } from "./components/SonnerToaster";
 import { UserRoute } from "./components/ProtectedRoute";
 import { RealtimeBridge } from "./components/RealtimeBridge";
+import { P2PBridge } from "./components/P2PBridge";
+import { CallOverlay } from "./components/CallOverlay";
 import { G37App } from "./components/G37App";
 import LoginPage from "./pages/login";
 import RegisterPage from "./pages/register";
@@ -48,9 +50,11 @@ function Workshop() {
   return (
     <UserRoute>
       <RealtimeBridge />
+      <P2PBridge />
       <main className={indexStyles.page}>
         <G37App />
       </main>
+      <CallOverlay />
     </UserRoute>
   );
 }

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { getG37State, type OutputType } from "../endpoints/g37/state_GET.schema";
+import { getG37SignedState, type OutputType } from "../endpoints/g37/state_GET.schema";
 import type { InputType } from "../endpoints/g37/mutate_POST.schema";
 import { applyLocal, enqueue, flush, loadCachedState, newId, onOutboxChange, outbox, saveCachedState, withPending } from "../lib/offline";
 import { isOnline, useOnline } from "../lib/net";
+import { flushRelay, noteServerState, stateAdopted } from "../lib/p2p";
 
 export const G37_STATE_KEY = ["g37", "state"] as const;
 
@@ -17,8 +18,9 @@ export const useG37 = () => {
   const query = useQuery<OutputType, Error>({
     queryKey: G37_STATE_KEY,
     queryFn: async () => {
-      const fresh = await getG37State();
+      const { state: fresh, text, sig } = await getG37SignedState();
       saveCachedState(fresh);
+      noteServerState(fresh, text, sig);
       return withPending(fresh);
     },
     initialData: () => {
@@ -33,6 +35,11 @@ export const useG37 = () => {
     refetchInterval: online ? 60_000 : false,
     refetchOnWindowFocus: true,
   });
+
+  // Données plus récentes reçues d'un collègue proche (sans Internet).
+  useEffect(() => stateAdopted.on((adopted) => {
+    queryClient.setQueryData<OutputType>(G37_STATE_KEY, withPending(adopted));
+  }), [queryClient]);
 
   const save = useCallback((raw: InputType) => {
     const current = queryClient.getQueryData<OutputType>(G37_STATE_KEY);
@@ -53,7 +60,7 @@ export const useG37 = () => {
     if (!isOnline()) {
       toast.message("Enregistré sur le téléphone", {
         id: "offline-saved",
-        description: "Sera envoyé automatiquement dès le retour du réseau.",
+        description: "Partira dès le retour du réseau, ou via un collègue proche.",
       });
     }
     void syncNow(queryClient);
@@ -72,7 +79,11 @@ export const useG37 = () => {
 
 // Envoie la file d'attente puis recharge les données.
 export async function syncNow(queryClient: ReturnType<typeof useQueryClient>) {
-  if (!outbox().length) return;
+  const relayed = await flushRelay();
+  if (!outbox().length) {
+    if (relayed) await queryClient.invalidateQueries({ queryKey: G37_STATE_KEY });
+    return;
+  }
   const r = await flush();
   r.messages.forEach((m) => toast.message(m, { duration: m.includes("temporaire") ? 60000 : 6000 }));
   r.errors.forEach((e) => toast.error(`Action non enregistrée : ${e}`));

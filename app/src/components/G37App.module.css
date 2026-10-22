@@ -1,54 +1,38 @@
 /* Atelier G37 — habillage "poste de conduite" : ardoise profonde, signal ambre, données en chasse fixe. */
 .app {
-  --g-bg: #f2f1ed;
-  --g-surface: #ffffff;
-  --g-surface-2: #e7e5df;
-  --g-ink: #16181b;
-  --g-dim: #646a72;
-  --g-line: #d4d2cb;
-  --g-accent: #a85a12;
-  --g-accent-ink: #ffffff;
-  --g-accent-soft: #f2e4d3;
-  --g-ok: #2c6e4a;
-  --g-ok-soft: #dcebe1;
-  --g-warn: #8a6504;
-  --g-warn-soft: #f4ecd4;
-  --g-crit: #a32f22;
-  --g-crit-soft: #f6dfdb;
-  --g-radius: 10px;
+  /* Look A « Atelier de nuit » */
+  --g-bg: #0f1b2d;
+  --g-surface: #16263d;
+  --g-surface-2: #1d3150;
+  --g-ink: #e8eef6;
+  --g-dim: #9fb0c6;
+  --g-line: #2a3d58;
+  --g-accent: #f59e0b;
+  --g-accent-ink: #1a1205;
+  --g-accent-soft: #3a2e12;
+  --g-ok: #34d399;
+  --g-ok-soft: #123a2e;
+  --g-warn: #fbbf24;
+  --g-warn-soft: #3a2e12;
+  --g-crit: #f87171;
+  --g-crit-soft: #3a1c22;
+  --g-info: #60a5fa;
+  --g-radius: 14px;
 
   background: var(--g-bg);
   color: var(--g-ink);
   min-height: 100%;
   font-family: var(--font-family-base, system-ui, sans-serif);
-}
-
-@media (prefers-color-scheme: dark) {
-  .app {
-    --g-bg: #15171a;
-    --g-surface: #1d2024;
-    --g-surface-2: #282c31;
-    --g-ink: #e9ecef;
-    --g-dim: #99a1aa;
-    --g-line: #32373d;
-    --g-accent: #d98c3f;
-    --g-accent-ink: #1b1206;
-    --g-accent-soft: #33261a;
-    --g-ok: #63c086;
-    --g-ok-soft: #192c21;
-    --g-warn: #d9af45;
-    --g-warn-soft: #2f2817;
-    --g-crit: #e2796a;
-    --g-crit-soft: #331d1a;
-  }
+  padding-bottom: calc(84px + env(safe-area-inset-bottom));
 }
 
 .shell { max-width: 1120px; margin: 0 auto; padding: 0 var(--spacing-4, 16px) var(--spacing-16, 64px); }
 
 .topbar {
   position: sticky; top: 0; z-index: 20;
-  background: var(--g-surface);
+  background: var(--g-bg);
   border-bottom: 1px solid var(--g-line);
+  padding-top: env(safe-area-inset-top);
 }
 .topbarInner {
   max-width: 1120px; margin: 0 auto;
@@ -76,6 +60,87 @@
   text-transform: uppercase; padding: 6px 9px;
 }
 .tabActive { color: var(--g-ink); border-bottom-color: var(--g-accent); }
+
+/* ---------- Barre du haut (look A) ---------- */
+.brandLogo {
+  width: 40px; height: 40px; border-radius: 12px; flex: none;
+  background: var(--g-accent); color: var(--g-accent-ink);
+  font-family: var(--font-family-monospace, monospace); font-weight: 600; font-size: 0.85rem;
+  display: flex; align-items: center; justify-content: center;
+}
+.brandText { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.brandName { font-size: 1.02rem; font-weight: 600; }
+.syncChip {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px;
+  padding: 9px 12px; border-radius: 12px; font-size: 0.8rem;
+  background: var(--g-surface); border: 1px solid var(--g-line);
+}
+.syncChip svg { flex: none; color: var(--g-info); }
+.syncChip strong { font-weight: 600; }
+.syncAgo { margin-left: auto; font-family: var(--font-family-monospace, monospace); color: var(--g-dim); font-size: 0.75rem; }
+
+/* ---------- Navigation du bas ---------- */
+.bottomNav {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+  height: calc(72px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+  background: #0b1524; border-top: 1px solid #22344d;
+  display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.navBtn {
+  background: none; border: 0; cursor: pointer; color: var(--g-dim);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  font: inherit; font-size: 0.7rem; position: relative; min-height: 44px;
+}
+.navBtn svg { width: 22px; height: 22px; }
+.navActive { color: var(--g-accent); font-weight: 600; }
+.navBadge {
+  position: absolute; top: 8px; left: calc(50% + 6px);
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--g-crit); color: #2a0b0b; font-size: 0.66rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.moreSheet { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.moreItem {
+  min-height: 72px; border-radius: 14px; border: 1px solid var(--g-line); background: var(--g-surface-2);
+  color: var(--g-ink); font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 8px;
+}
+.moreItem svg { width: 22px; height: 22px; color: var(--g-accent); }
+
+/* ---------- Accueil (look A) ---------- */
+.statusCard { background: var(--g-surface); border: 1px solid var(--g-line); border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+.statusTop { display: flex; align-items: baseline; justify-content: space-between; }
+.statusTotal { font-family: var(--font-family-monospace, monospace); font-size: 1.75rem; font-weight: 600; }
+.statusBar { display: flex; gap: 3px; height: 12px; border-radius: 6px; overflow: hidden; }
+.statusBar > span { display: block; min-width: 4px; }
+.statusLegend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; font-size: 0.8rem; color: #c7d3e2; }
+.statusLegend > div { display: flex; flex-direction: column; gap: 2px; }
+.statusNum { font-family: var(--font-family-monospace, monospace); font-size: 1.25rem; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.tile {
+  text-align: left; cursor: pointer; font: inherit; color: var(--g-ink);
+  padding: 16px; border-radius: 16px; display: flex; flex-direction: column; gap: 6px; min-height: 92px;
+}
+.tileCrit { background: var(--g-crit-soft); border: 1px solid #6b2a33; }
+.tileWarn { background: var(--g-warn-soft); border: 1px solid #6b5418; }
+.tileOk { background: var(--g-ok-soft); border: 1px solid #1f5c48; }
+.tileNum { font-family: var(--font-family-monospace, monospace); font-size: 1.6rem; font-weight: 600; }
+.tileCrit .tileNum { color: #fca5a5; }
+.tileWarn .tileNum { color: #fcd34d; }
+.tileOk .tileNum { color: #6ee7b7; }
+.quick { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.quickBtn {
+  min-height: 64px; border-radius: 14px; border: 1px solid var(--g-line); background: var(--g-surface);
+  color: var(--g-ink); font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+}
+.quickBtn svg { width: 20px; height: 20px; }
+.quickPrimary { background: var(--g-accent); color: var(--g-accent-ink); border-color: var(--g-accent); }
+.todoRow { padding: 12px 14px; border-radius: 12px; background: var(--g-surface); display: flex; align-items: center; gap: 12px; }
+.todoMc { font-family: var(--font-family-monospace, monospace); font-size: 0.8rem; color: var(--g-dim); width: 52px; flex: none; }
+.todoWhat { flex: 1; min-width: 0; font-size: 0.88rem; }
+.todoWhen { font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+
 
 .stack { display: flex; flex-direction: column; gap: 14px; padding-top: 16px; }
 .card { background: var(--g-surface); border: 1px solid var(--g-line); border-radius: var(--g-radius); padding: 14px; }
@@ -139,7 +204,7 @@
 .badge {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 5px; margin-left: 5px;
-  border-radius: 999px; background: var(--g-crit); color: #fff;
+  border-radius: 999px; background: var(--g-crit); color: #2a0b0b;
   font-size: 0.68rem; font-weight: 700; line-height: 1;
   font-variant-numeric: tabular-nums;
 }
@@ -155,10 +220,10 @@
 .userMain { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; min-width: 0; flex: 1 1 220px; }
 .userSeen { font-size: 0.72rem; color: var(--g-dim); white-space: nowrap; }
 .assistantBubble {
-  position: fixed; right: 18px; bottom: 18px; z-index: 80;
+  position: fixed; right: 18px; bottom: calc(88px + env(safe-area-inset-bottom)); z-index: 80;
   display: inline-flex; align-items: center; gap: 8px; border: 0;
   border-radius: 999px; padding: 11px 16px; cursor: pointer;
-  background: var(--g-ink); color: #fff; box-shadow: 0 10px 28px rgba(0,0,0,.18);
+  background: var(--g-accent); color: var(--g-accent-ink); box-shadow: 0 10px 28px rgba(0,0,0,.35);
   font-weight: 750; font-size: .82rem;
 }
 .assistantPanel {

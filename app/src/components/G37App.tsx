@@ -11,12 +11,12 @@ import { postG37Upload, MAX_UPLOAD_BYTES } from "../endpoints/g37/upload_POST.sc
 import { getG37Export } from "../endpoints/g37/export_GET.schema";
 import { enablePush, disablePush, isPushOptedIn, onPushEnabledChange, onPushMessage } from "../helpers/pushClient";
 import type { G37Machine } from "../endpoints/g37/state_GET.schema";
-import { getG37Quota } from "../endpoints/g37/quota_GET.schema";
-import { postG37Calc } from "../endpoints/g37/calc_POST.schema";
-import { g37Plans, type G37QuotaStatus } from "../helpers/g37Plans";
-import { G37Paywall } from "./G37Paywall";
-import { G37LimitsEditor } from "./G37LimitsEditor";
 import { AppStatusBar } from "./AppStatusBar";
+import { MessagesView } from "./MessagesView";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./Dialog";
+import { getP2PStatus, getPeers, p2pStatus, peersChanged, requestP2PPermissions, startP2P } from "../lib/p2p";
+import { nearbyAvailable } from "../lib/nearby";
+import { unreadFrom, useDms } from "../lib/dms";
 import { saveBlob } from "../lib/files";
 import { isOnline } from "../lib/net";
 import { extractManualChunks, uploadManualChunks } from "../lib/manualPdf";
@@ -26,7 +26,7 @@ import styles from "./G37App.module.css";
 const TABS: Array<[string, string, string]> = [
   ["accueil", "Accueil", "Dashboard"], ["machines", "Machines", "Machines"], ["travaux", "Travaux", "Work"], ["gears", "Gears", "Gears"], ["calcul", "Calcul", "Calculator"],
   ["maintenance", "Maintenance", "Maintenance"], ["graissage", "Graissage", "Greasing"], ["lubrification", "Lubrification", "Lubrication"], ["schedule", "Schedule works", "Schedule works"],
-  ["pannes", "Pannes", "Breakdowns"], ["quarts", "Quarts", "Shifts"], ["discussion", "Discussion", "Discussion"], ["ia", "IA", "AI"],
+  ["pannes", "Pannes", "Breakdowns"], ["quarts", "Quarts", "Shifts"], ["discussion", "Messages", "Messages"], ["ia", "IA", "AI"],
   ["magasin", "Magasin", "Store"], ["acces", "Accès", "Access"],
 ];
 
@@ -185,6 +185,17 @@ export const G37App = ({ className }: { className?: string }) => {
     return () => window.removeEventListener("g37:open-tab", open);
   }, []);
   const [openMachine, setOpenMachine] = useState<number | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [msgSegment, setMsgSegment] = useState<"chats" | "calls">("chats");
+  const dmList = useDms();
+  // Mode sans Internet : état et collègues à proximité.
+  const [p2p, setP2p] = useState(getP2PStatus());
+  const [nearCount, setNearCount] = useState(() => getPeers().filter((p) => p.connected).length);
+  useEffect(() => {
+    const a = p2pStatus.on(setP2p);
+    const b = peersChanged.on((list) => setNearCount(list.filter((p) => p.connected).length));
+    return () => { a(); b(); };
+  }, []);
   const [q, setQ] = useState("");
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [shiftMonth, setShiftMonth] = useState(monthKey());
@@ -322,38 +333,8 @@ export const G37App = ({ className }: { className?: string }) => {
     }
   };
 
-  // Quotas gratuits (questions IA / calculs) et abonnement illimité.
-  const [quota, setQuota] = useState<G37QuotaStatus | null>(null);
-  const [paywall, setPaywall] = useState<"ai" | "calc" | null>(null);
-  const [calcDone, setCalcDone] = useState<string | null>(null);
-  const [calcBusy, setCalcBusy] = useState(false);
-  useEffect(() => {
-    if (!me || me.pending) return;
-    const refresh = () => { getG37Quota().then(setQuota).catch(() => {}); };
-    refresh();
-    // Un abonnement validé par l'admin (ou le passage à minuit) se voit au retour sur l'application.
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [me?.id, me?.pending]);
-  // Paiement SasPay confirmé pendant que la fenêtre d'abonnement est ouverte (retour sur l'onglet) : on la ferme.
-  useEffect(() => {
-    if (paywall && quota?.unlimited) {
-      setPaywall(null);
-      toast.success(t("Paiement confirmé : accès illimité activé.", "Payment confirmed: unlimited access is on."));
-    }
-  }, [quota?.unlimited]);
-  const quotaLine = (kind: "ai" | "calc") => {
-    if (!quota || quota.isAdmin) return null;
-    if (quota.subscription) {
-      const end = new Date(quota.subscription.endsAt).toLocaleString(lang === "fr" ? "fr-FR" : "en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-      return t(`Illimité jusqu'au ${end}`, `Unlimited until ${end}`);
-    }
-    const left = quota[kind].remaining ?? 0;
-    const max = quota[kind].limit;
-    return kind === "ai"
-      ? t(`Questions gratuites restantes aujourd'hui : ${left} / ${max}`, `Free questions left today: ${left} / ${max}`)
-      : t(`Calculs gratuits restants aujourd'hui : ${left} / ${max}`, `Free calculations left today: ${left} / ${max}`);
-  };
+  // Les paiements sont supprimés : l'IA et le calcul sont illimités pour tous.
+  const quotaLine = (_kind: "ai" | "calc"): string | null => null;
 
   const askAssistant = async () => {
     const message = assistantInput.trim();
@@ -369,13 +350,6 @@ export const G37App = ({ className }: { className?: string }) => {
         body: JSON.stringify({ message, language: lang, context: assistantContext, history: assistantMessages.slice(-8).map((m) => ({ role: m.role, text: m.text.slice(0, 3500) })) }),
       });
       const data = await response.json().catch(() => ({}));
-      if (data?.quota) setQuota(data.quota);
-      if (data.code === "QUOTA") {
-        setAssistantMessages((p) => [...p, { role: "assistant", text: t("Limite gratuite atteinte pour aujourd'hui. Choisis un abonnement pour continuer, ou reviens demain.", "Free limit reached for today. Choose a subscription to continue, or come back tomorrow.") }]);
-        setAssistantInput(message);
-        setPaywall("ai");
-        return;
-      }
       if (data.code === "OUT_OF_CREDITS") {
         setAssistantMessages((p) => [...p, { role: "assistant", text: t("Le moteur IA est temporairement indisponible (clé ou quota Gemini). Les données G37 restent disponibles ; réessaie plus tard.", "The AI engine is temporarily unavailable (Gemini key or quota). G37 data remains available; try again later.") }]);
         return;
@@ -526,11 +500,66 @@ export const G37App = ({ className }: { className?: string }) => {
     </div>
   );
 
+  const stoppedCount = machines.filter((m) => m.status === "arret").length;
+  const maintCount = machines.filter((m) => m.status === "maintenance").length;
+  const todo = [
+    ...maintDue.map((m) => ({ key: `m${m.no}`, no: m.no, what: t("Visite périodique", "Periodic visit"), days: daysTo(dayISO(m.nextMaintenance!)) })),
+    ...cycleDue.map((c, i) => ({ key: `c${i}`, no: c.no, what: c.what, days: c.days })),
+  ].sort((a, b) => a.days - b.days).slice(0, 5);
+  const whenColor = (n: number) => (n < 0 ? "#fca5a5" : n === 0 ? "#fcd34d" : "var(--g-dim)");
+  const goto = (k: string) => { setTab(k); setOpenMachine(null); setQ(""); window.scrollTo(0, 0); };
+
   const renderAccueil = () => (
     <div className={styles.stack}>
-      <div className={styles.head}>
-        <h1 className={styles.title}>{t("Tableau de bord", "Dashboard")}</h1>
-        <p className={styles.sub}>{fmtDate(todayISO())} · {machines.length} {t("métiers", "machines")}</p>
+      <div className={styles.statusCard}>
+        <div className={styles.statusTop}>
+          <strong>{t("État des métiers", "Machine status")}</strong>
+          <span className={styles.statusTotal}>{machines.length}</span>
+        </div>
+        <div className={styles.statusBar} aria-hidden="true">
+          {running > 0 && <span style={{ flex: running, background: "var(--g-ok)" }} />}
+          {stoppedCount > 0 && <span style={{ flex: stoppedCount, background: "var(--g-crit)" }} />}
+          {maintCount > 0 && <span style={{ flex: maintCount, background: "var(--g-warn)" }} />}
+        </div>
+        <div className={styles.statusLegend}>
+          <div><span className={styles.statusNum} style={{ color: "var(--g-ok)" }}>{running}</span>{t("En service", "Running")}</div>
+          <div><span className={styles.statusNum} style={{ color: "var(--g-crit)" }}>{stoppedCount}</span>{t("À l'arrêt", "Stopped")}</div>
+          <div><span className={styles.statusNum} style={{ color: "var(--g-warn)" }}>{maintCount}</span>{t("Maintenance", "Maintenance")}</div>
+        </div>
+      </div>
+      <div className={styles.tiles}>
+        <button className={`${styles.tile} ${openFaults.length ? styles.tileCrit : styles.tileOk}`} onClick={() => goto("pannes")}>
+          <span className={styles.tileNum}>{openFaults.length}</span><span>{t("Pannes ouvertes", "Open faults")}</span>
+        </button>
+        <button className={`${styles.tile} ${cycleDue.length ? styles.tileWarn : styles.tileOk}`} onClick={() => goto("graissage")}>
+          <span className={styles.tileNum}>{cycleDue.length}</span><span>{t("Graissages dus", "Greasing due")}</span>
+        </button>
+      </div>
+      <div className={styles.quick}>
+        <button className={`${styles.quickBtn} ${styles.quickPrimary}`} onClick={() => goto("pannes")}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l10 18H2L12 3z" /><path d="M12 10v5" /><path d="M12 18h.01" /></svg>
+          {t("Panne", "Fault")}
+        </button>
+        <button className={styles.quickBtn} onClick={() => { setMsgSegment("calls"); goto("discussion"); }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-3 2a11 11 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" /></svg>
+          {t("Appeler", "Call")}
+        </button>
+        <button className={styles.quickBtn} onClick={() => { setMsgSegment("chats"); goto("discussion"); }}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" /></svg>
+          Message
+        </button>
+      </div>
+      <div>
+        <h2 className={styles.h2} style={{ margin: "6px 0 8px" }}>{t("À faire aujourd'hui", "To do today")}</h2>
+        <div className={styles.stack} style={{ paddingTop: 0, gap: 8 }}>
+          {todo.length ? todo.map((x) => (
+            <div key={x.key} className={styles.todoRow}>
+              <span className={styles.todoMc}>M/C {String(x.no).padStart(2, "0")}</span>
+              <span className={styles.todoWhat}>{x.what}</span>
+              <span className={styles.todoWhen} style={{ color: whenColor(x.days) }}>{dueText(x.days)}</span>
+            </div>
+          )) : <div className={styles.empty}>{t("Rien d'échu pour l'instant.", "Nothing due for now.")}</div>}
+        </div>
       </div>
       <div className={styles.kpis}>
         {kpi(`${running} / ${machines.length}`, t("Métiers en service", "Machines running"), stopped.length ? "warn" : "ok")}
@@ -1412,22 +1441,10 @@ export const G37App = ({ className }: { className?: string }) => {
     const hBad = hIn != null && (!Number.isInteger(hIn) || !g37.inGearRange("H", hIn));
     const drFromGears = gIn != null && hIn != null && !gBad && !hBad ? g37.draftOf(gIn, hIn) : null;
 
-    // Chaque calcul lancé compte dans le quota gratuit ; en illimité (admin ou abonné) le résultat reste en direct.
-    const calcKey = JSON.stringify([mode, d("cl.count", "30"), d("cl.draft", "36.14"), d("cl.g", "46"), d("cl.h", "104"), d("cl.hank", "0.83")]);
-    const showResults = !!quota?.unlimited || calcDone === calcKey;
-    const runCalc = async () => {
-      setCalcBusy(true);
-      try {
-        const res = await postG37Calc();
-        setQuota(res.quota);
-        if (res.ok) setCalcDone(calcKey);
-        else setPaywall("calc");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : t("Calcul indisponible.", "Calculation unavailable."));
-      } finally {
-        setCalcBusy(false);
-      }
-    };
+    // Calcul illimité : les résultats s'affichent en direct.
+    const showResults = true;
+    const calcBusy = false;
+    const runCalc = async () => {};
 
     return (
       <div className={styles.stack}>
@@ -1685,8 +1702,7 @@ export const G37App = ({ className }: { className?: string }) => {
 
   /* ---------- Discussion ---------- */
   const renderDiscussion = () => (
-    <div className={styles.stack}>
-      <div className={styles.head}><h1 className={styles.title}>Discussion</h1><p className={styles.sub}>{t("Entre collègues de l'atelier", "Between workshop colleagues")}</p></div>
+    <div className={styles.stack} style={{ paddingTop: 4 }}>
       {can("forum") && (
         <div className={styles.card}>
           {chatReply && (
@@ -1892,9 +1908,6 @@ export const G37App = ({ className }: { className?: string }) => {
         ))}
         {!can("roles") && <div className={styles.note} style={{ marginTop: 10 }}>{t("Seul l'admin change les grades.", "Only the admin changes roles.")}</div>}
       </div>
-      {me.id === g37Plans.OWNER_USER_ID && (
-        <G37LimitsEditor lang={lang} roleName={(k) => roleName(k, g37.ROLES[k]?.n ?? k)} />
-      )}
     </div>
   );
 
@@ -1996,7 +2009,10 @@ export const G37App = ({ className }: { className?: string }) => {
       case "schedule": return renderCycle("sched");
       case "pannes": return renderPannes();
       case "quarts": return renderQuarts();
-      case "discussion": return renderDiscussion();
+      case "discussion": return (
+        <MessagesView state={state} lang={lang} save={save} renderGroup={renderDiscussion} segment={msgSegment} onSegment={setMsgSegment}
+          roleName={(k, f) => roleName(k, f)} />
+      );
       case "ia": return renderAssistant();
       case "magasin": return renderMagasin();
       case "acces": return renderAcces();
@@ -2022,45 +2038,57 @@ export const G37App = ({ className }: { className?: string }) => {
     </>
   );
 
+  const dmUnread = [...new Set(dmList.filter((m) => m.from !== me.id).map((m) => m.from))].reduce((n, peer) => n + unreadFrom(peer, me.id, dmList), 0);
+  const ico = (d: string) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
+  );
+  const inNav = (k: string) => !q.trim() && activeTab === k;
+  const has = (k: string) => visibleTabs.some(([vk]) => vk === k);
+  const mainKeys = ["accueil", "machines", "pannes", "travaux", "discussion"];
+  const bottomItems = [
+    { key: "accueil", label: t("Accueil", "Home"), icon: ico("M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"), badge: 0, active: inNav("accueil"), go: () => goto("accueil") },
+    ...(has("machines") ? [{ key: "machines", label: "Machines", icon: ico("M4 20V8l5 3V8l5 3V4h6v16zM8 16h2M13 16h2"), badge: 0, active: inNav("machines"), go: () => goto("machines") }] : []),
+    ...(has("pannes") || has("travaux") ? [{ key: "pannes", label: t("Pannes", "Faults"), icon: ico("M12 3l10 18H2L12 3zM12 10v5M12 18h.01"), badge: openCount, active: inNav("pannes") || inNav("travaux"), go: () => goto(has("pannes") ? "pannes" : "travaux") }] : []),
+    ...(has("discussion") ? [{ key: "discussion", label: "Messages", icon: ico("M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"), badge: dmUnread, active: inNav("discussion"), go: () => goto("discussion") }] : []),
+    { key: "plus", label: t("Plus", "More"), icon: ico("M5 12h.01M12 12h.01M19 12h.01"), badge: 0, active: !q.trim() && !mainKeys.includes(activeTab), go: () => setMoreOpen(true) },
+  ];
+  const moreItems = navItems.filter((n) => !mainKeys.includes(n.key) && !(n.members ?? []).some((m) => mainKeys.includes(m)));
+  // Les travaux restent accessibles depuis l'onglet Pannes (groupe « Pannes & travaux »).
+
   const needsPost = me.jobRole === "helper" && me.role !== "admin";
 
   return (
     <div className={`${styles.app} ${className ?? ""}`}>
       <header className={styles.topbar}>
         <div className={styles.topbarInner}>
-          <div className={styles.brand}>
-            <span className={styles.brandMark}>G37</span>
-            <span className={styles.brandSub}>Rieter · {machines.length} {t("métiers", "machines")}</span>
+          <div className={styles.brand} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span className={styles.brandLogo}>G37</span>
+            <span className={styles.brandText}>
+              <span className={styles.brandName}>Atelier G37</span>
+              <span className={styles.brandSub}>
+                <span className={`${styles.dot} ${me.pending ? styles.dotWarn : ""}`} />{" "}
+                {me.displayName} · {me.role === "admin" ? "Admin" : roleName(me.jobRole, g37.ROLES[me.jobRole]?.n ?? me.jobRole)}{me.pending ? t(" (en attente)", " (pending)") : ""}
+              </span>
+            </span>
           </div>
           <div className={styles.grow} />
-          <div className={styles.search}>
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("Rechercher…", "Search…")} />
-          </div>
-          <div className={styles.row} style={{ gap: 4, marginLeft: 8 }}>
+          <div className={styles.row} style={{ gap: 4 }}>
             <Button size="sm" variant={lang === "fr" ? "primary" : "outline"} onClick={() => setLang("fr")}>FR</Button>
             <Button size="sm" variant={lang === "en" ? "primary" : "outline"} onClick={() => setLang("en")}>EN</Button>
           </div>
-          <div className={styles.who}>
-            <span className={`${styles.dot} ${me.pending ? styles.dotWarn : ""}`} />
-            {me.displayName} · {me.role === "admin" ? "Admin" : roleName(me.jobRole, g37.ROLES[me.jobRole]?.n ?? me.jobRole)}{me.pending ? t(" (en attente)", " (pending)") : ""}
+        </div>
+        <div className={styles.topbarInner} style={{ paddingTop: 0, gap: 8 }}>
+          <div className={styles.search} style={{ flex: 1 }}>
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("Rechercher une machine, une pièce…", "Search a machine, a part…")} />
           </div>
         </div>
-        <nav className={styles.tabs}>
-          {navItems.map((it) => {
-            const active = !q.trim() && (it.members ? it.members.includes(activeTab) : activeTab === it.key);
-            return (
-              <button key={it.key} className={`${styles.tab} ${active ? styles.tabActive : ""}`}
-                onClick={() => { setTab(it.members ? (it.members.includes(activeTab) ? activeTab : it.members[0]) : it.key); setOpenMachine(null); setQ(""); window.scrollTo(0, 0); }}>
-                <span className={styles.tabWrap}>
-                  {lang === "fr" ? it.fr : it.en}
-                  {(it.key === "pannes" || it.members?.includes("pannes")) && openCount > 0 && (
-                    <span className={`${styles.badge} ${styles.badgePulse}`} aria-label={t(`${openCount} pannes ouvertes`, `${openCount} open faults`)}>{openCount}</span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
-        </nav>
+        {(nearCount > 0 || p2p.lastExchange) && (
+          <div className={styles.syncChip}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 7l10 10-5 5V2l5 5L7 17" /></svg>
+            <span><strong>{nearCount}</strong> {t("collègue(s) à proximité", "colleague(s) nearby")}</span>
+            {p2p.lastExchange && <span className={styles.syncAgo}>{new Date(p2p.lastExchange).toLocaleTimeString(lang === "fr" ? "fr-FR" : "en-GB", { hour: "2-digit", minute: "2-digit" })}</span>}
+          </div>
+        )}
       </header>
 
       <div className={styles.shell}>
@@ -2114,16 +2142,51 @@ export const G37App = ({ className }: { className?: string }) => {
             </div>
           </div>
         )}
+        {p2p.available && p2p.needsPermission && (
+          <div className={styles.card} style={{ marginTop: 16 }}>
+            <div className={`${styles.row} ${styles.between}`}>
+              <div style={{ minWidth: 0 }}>
+                <strong>{t("Activer le mode sans Internet", "Enable offline mode")}</strong>
+                <div className={styles.meta}>
+                  {t("L'app échange les données, les messages et les mises à jour avec les téléphones des collègues proches, par Bluetooth et Wi-Fi, même sans Internet. Autorise Bluetooth, appareils à proximité, position, micro et notifications.", "The app exchanges data, messages and updates with nearby colleagues' phones over Bluetooth and Wi-Fi, even without Internet. Allow Bluetooth, nearby devices, location, microphone and notifications.")}
+                </div>
+              </div>
+              <Button variant="primary" onClick={async () => {
+                const ok = await requestP2PPermissions();
+                if (ok) { await startP2P({ id: me.id, pending: me.pending }); toast.success(t("Mode sans Internet activé.", "Offline mode enabled.")); }
+                else toast.error(t("Autorisations refusées. Active-les dans Réglages > Applications > Atelier G37.", "Permissions refused. Enable them in Settings > Apps > Atelier G37."));
+              }}>{t("Activer", "Enable")}</Button>
+            </div>
+          </div>
+        )}
         {body()}
       </div>
-      <G37Paywall
-        open={paywall !== null}
-        kind={paywall ?? "ai"}
-        quota={quota}
-        lang={lang}
-        onQuota={setQuota}
-        onOpenChange={(o) => { if (!o) { setPaywall(null); getG37Quota().then(setQuota).catch(() => {}); } }}
-      />
+
+      <nav className={styles.bottomNav} aria-label={t("Navigation principale", "Main navigation")}>
+        {bottomItems.map((it) => (
+          <button key={it.key} className={`${styles.navBtn} ${it.active ? styles.navActive : ""}`} aria-current={it.active ? "page" : undefined} onClick={it.go}>
+            <span style={{ position: "relative", display: "inline-flex" }}>
+              {it.icon}
+              {it.badge > 0 && <span className={styles.navBadge}>{it.badge > 99 ? "99+" : it.badge}</span>}
+            </span>
+            <span>{it.label}</span>
+          </button>
+        ))}
+      </nav>
+
+      <Dialog open={moreOpen} onOpenChange={setMoreOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>{t("Plus", "More")}</DialogTitle></DialogHeader>
+          <div className={styles.moreSheet}>
+            {moreItems.map((it) => (
+              <button key={it.key} className={styles.moreItem} onClick={() => { setMoreOpen(false); goto(it.members ? it.members[0] : it.key); }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M9 12h6" /></svg>
+                <span>{lang === "fr" ? it.fr : it.en}</span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

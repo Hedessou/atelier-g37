@@ -1,0 +1,16 @@
+{
+  "name": "g37-nearby",
+  "version": "1.0.0",
+  "description": "Atelier G37 : échanges sans Internet (Bluetooth / Wi-Fi via Google Nearby), appels de proximité, mises à jour de proche en proche.",
+  "main": "index.js",
+  "license": "UNLICENSED",
+  "private": true,
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "peerDependencies": {
+    "@capacitor/core": "^7.0.0"
+  }
+}

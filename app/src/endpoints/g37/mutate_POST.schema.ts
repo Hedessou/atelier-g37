@@ -136,6 +136,13 @@ export const schema = z.discriminatedUnion("action", [
     jobRole: z.string().min(1).max(40),
     code: z.string().max(40).nullable(),
   }),
+  // Message privé : contenu chiffré pour les téléphones du destinataire (voir lib/crypto.ts).
+  z.object({
+    action: z.literal("dm"),
+    id: z.string().regex(/^[A-Za-z0-9_-]{8,60}$/),
+    to: z.number().int(),
+    envelope: z.record(z.any()),
+  }),
 ]);
 
 export type InputType = z.infer<typeof schema>;

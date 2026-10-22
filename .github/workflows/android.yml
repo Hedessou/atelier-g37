@@ -40,8 +40,11 @@ jobs:
       - name: Construire l'app
         env:
           VITE_BUNDLE_VERSION: ${{ env.BUNDLE_VERSION }}
-          VITE_PUSH_ENABLED: ${{ secrets.GOOGLE_SERVICES_JSON != '' && '1' || '0' }}
-        run: npm run build
+          HAS_GS_SECRET: ${{ secrets.GOOGLE_SERVICES_JSON != '' && '1' || '0' }}
+        run: |
+          if [ "$HAS_GS_SECRET" = "1" ] || [ -f google-services.json ]; then export VITE_PUSH_ENABLED=1; else export VITE_PUSH_ENABLED=0; fi
+          echo "Notifications : $VITE_PUSH_ENABLED"
+          npm run build
 
       - name: Préparer Android
         env:
@@ -71,6 +74,7 @@ jobs:
         run: |
           (cd dist && zip -qr ../bundle.zip .)
           echo "BUNDLE_SHA256=$(sha256sum bundle.zip | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "APK_SHA256=$(sha256sum "atelier-g37-${BUNDLE_VERSION}.apk" | cut -d' ' -f1)" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -96,5 +100,5 @@ jobs:
           curl -sfS -X PUT "$BUNDLE_URL" -H "content-type: application/zip" -H "x-upsert: true" --data-binary @bundle.zip > /dev/null
           curl -sfS -X PUT "$APK_URL" -H "content-type: application/vnd.android.package-archive" -H "x-upsert: true" \
             --data-binary @"atelier-g37-${BUNDLE_VERSION}.apk" > /dev/null
-          BODY=$(node -e "console.log(JSON.stringify({bundleVersion:process.env.BUNDLE_VERSION,bundleChecksum:process.env.BUNDLE_SHA256,nativeVersionCode:Number(process.argv[1]),minNativeVersionCode:process.argv[2]==='null'?null:Number(process.argv[2]),notes:process.argv[3]}))" "$NATIVE" "$MIN" "$NOTES")
+          BODY=$(node -e "console.log(JSON.stringify({bundleVersion:process.env.BUNDLE_VERSION,bundleChecksum:process.env.BUNDLE_SHA256,apkChecksum:process.env.APK_SHA256,nativeVersionCode:Number(process.argv[1]),minNativeVersionCode:process.argv[2]==='null'?null:Number(process.argv[2]),notes:process.argv[3]}))" "$NATIVE" "$MIN" "$NOTES")
           curl -sfS -X POST "$FN/commit" -H "x-publish-key: $PUBLISH_KEY" -H "content-type: application/json" -d "$BODY"
