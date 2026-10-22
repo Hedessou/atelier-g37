@@ -19,7 +19,7 @@ export async function handleState(request: Request): Promise<Response> {
     const [cyclePointRows, stockNameRows, users, machines, gears, stock, works, failures, greasing, shifts, efficiency, specs, maintenance, chat, manual] = await Promise.all([
       db.selectFrom("g37CyclePoints").select(["id", "kind", "pointKey", "name", "intervalDays"]).orderBy("createdAt", "asc").execute(),
       db.selectFrom("stockItems").select("name").orderBy("name", "asc").execute(),
-      db.selectFrom("users").select(["id", "email", "displayName", "role", "jobRole", "team", "pending", "lastSeen"]).orderBy("displayName", "asc").execute(),
+      db.selectFrom("users").select(["id", "email", "displayName", "role", "jobRole", "team", "pending", "lastSeen", "firstName", "lastName", "postTitle", "avatarUrl"]).orderBy("displayName", "asc").execute(),
       db.selectFrom("machines").select(["id", "name", "machineNo", "groupId", "status", "runG", "runH", "runCount", "stopReason", "stoppedSince", "lastMaintenance", "nextMaintenance"]).execute(),
       db.selectFrom("gears").select(["gearType", "teeth", "stock"]).orderBy("gearType", "asc").orderBy("teeth", "asc").execute(),
       db.selectFrom("stockItems").select(["id", "name", "category", "unit", "quantity", "minimumQuantity"]).orderBy("category", "asc").orderBy("name", "asc").execute(),
@@ -36,7 +36,20 @@ export async function handleState(request: Request): Promise<Response> {
       db.selectFrom("g37ManualChunks").select((eb: Row) => eb.fn.countAll().as("n")).executeTakeFirst(),
     ]);
 
-    const withSeen = users.map((u: Row) => ({ ...u, team: u.team ?? null, lastSeen: u.lastSeen ?? null }));
+    // Ce téléphone vient de recevoir les dernières données : on le note (suivi « qui est à jour »).
+    const deviceId = request.headers.get("x-g37-device") ?? "";
+    if (/^[A-Za-z0-9_-]{8,80}$/.test(deviceId)) {
+      await sql`UPDATE user_devices SET last_state_at = now(), last_seen = now() WHERE device_id = ${deviceId} AND user_id = ${user.id}`.catch(() => {});
+    }
+    const [syncRows, lastChange] = await Promise.all([
+      sql`SELECT user_id, max(last_state_at) AS at FROM user_devices WHERE last_state_at IS NOT NULL GROUP BY user_id`,
+      sql`SELECT max(applied_at) AS at FROM sync_ops`,
+    ]);
+    const syncBy = new Map(syncRows.map((r: Row) => [r.user_id, r.at]));
+    const withSeen = users.map((u: Row) => ({
+      ...u, team: u.team ?? null, lastSeen: u.lastSeen ?? null, firstName: u.firstName ?? null, lastName: u.lastName ?? null,
+      postTitle: u.postTitle ?? null, avatarUrl: u.avatarUrl ?? null, lastSyncAt: syncBy.get(u.id) ?? null,
+    }));
     const me = withSeen.find((u: Row) => u.id === user.id);
     const allowed = g37.visibleTabs(me ?? user);
     const sees = (tab: string) => allowed === null || allowed.includes(tab);
@@ -68,6 +81,7 @@ export async function handleState(request: Request): Promise<Response> {
 
     const payload = {
       serverTime: new Date(),
+      lastChangeAt: lastChange[0]?.at ?? null,
       manualReady: Number(manual?.n ?? 0) > 0,
       me: me ?? { id: user.id, email: user.email, displayName: user.displayName, role: user.role, jobRole: "helper", team: null, pending: false, lastSeen: null },
       users: allowed === null ? withSeen : withSeen.filter((u: Row) => u.id === user.id),

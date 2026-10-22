@@ -68,6 +68,24 @@ Copie tout le bloc ci-dessous dans la nouvelle conversation, avec le zip `atelie
 5. Publier (le workflow appelle la fonction `publish`) : tous les téléphones reçoivent la mise à jour.
 6. Ménage : désactiver la fonction temporaire `migration-import` ; supprimer l'utilisateur de test n°31.
 
+
+## Version 3 (23/10/2026) — Spinning R/F
+- En-tête « Spinning R/F » + nom de l'utilisateur en petit ; bouton profil (photo) en haut à droite.
+- Menu Plus : Profil (nom, prénom, poste, photo → stockage « avatars »), Paramètres, Déconnexion.
+- Paramètres : sonneries d'appel / alertes / messages (fichiers `app/plugins/g37-nearby/android/src/main/res/raw/*.ogg`),
+  « son fort » (volume réveil), autorisations importantes (notifications, appareils à proximité, micro, Bluetooth,
+  localisation, écran d'appel plein écran Android 14, batterie sans restriction, installation des mises à jour),
+  fréquence de vérification sans Internet (15/30/60/120 min, défaut 30), état de synchro de chaque collègue, langue.
+- Notifications : les téléphones v3 s'enregistrent en `android3` ; le serveur leur envoie des messages « données seules »
+  et le service natif `G37MessagingService` affiche lui-même la notification avec la sonnerie choisie (app fermée),
+  et un écran d'appel plein écran qui sonne en boucle (FLAG_INSISTENT) avec Répondre / Refuser.
+  Le script `app/scripts/prepare-android.sh` retire le service Firebase de Capacitor du manifeste (sinon conflit).
+- Appels : salles d'appel serveur (`POST g37/call_room`, `GET g37/call_rooms`, tables `call_rooms`, `call_room_members`),
+  à deux ou en groupe jusqu'à 25 (WebRTC maillé, audio seul), rejoindre un appel en cours, ajouter des collègues,
+  haut-parleur et muet pour tous les appels. Sans Internet : appel à deux seulement (Bluetooth / Wi-Fi).
+- Serveur `api` v4 déployé et vérifié (23 fichiers identiques au dossier `supabase/functions/api`).
+- `app/release.json` : versionCode natif 3, minimum 3 (tout le monde doit installer l'APK 3).
+
 ## Limites à connaître
 - Chaque collègue doit ouvrir **une fois** la nouvelle version avec Internet pour enregistrer son téléphone
   (sinon il ne peut pas recevoir de messages privés ni faire porter ses actions par un autre).
@@ -75,3 +93,7 @@ Copie tout le bloc ci-dessous dans la nouvelle conversation, avec le zip `atelie
 - Android affiche une notification permanente « Synchronisation de l'atelier » (obligatoire pour le travail en fond).
 - Installer un APK reçu d'un collègue demande un appui (« Installer ») et l'autorisation « sources inconnues ».
 - Appels Internet entre réseaux mobiles : peut nécessiter un serveur TURN (`app_config` clé `call.ice`).
+- Appel de groupe à 25 : chaque téléphone envoie sa voix à chacun (pas de serveur audio) ; au-delà de ~10 personnes
+  sur réseau mobile faible, la qualité baisse. Solution plus tard : serveur audio (SFU, ex. LiveKit).
+- Le code Java/Android n'a pas pu être compilé ici (pas d'outils Android) : la compilation GitHub peut signaler
+  une petite erreur à corriger.

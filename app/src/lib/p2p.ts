@@ -301,7 +301,24 @@ async function mergeOps(ops: WireOp[], state: State) {
 }
 
 // ---------- Collègues à proximité ----------
-export type Peer = { endpointId: string; userId: number | null; name: string; connected: boolean; seenAt: number };
+export type Peer = { endpointId: string; userId: number | null; name: string; connected: boolean; seenAt: number; dataAt?: number | null };
+
+// Fréquence de la vérification en arrière-plan (Paramètres) : 15, 30, 60 ou 120 minutes.
+const INTERVAL_KEY = "g37.syncInterval";
+export function syncIntervalMinutes(): number {
+  try { return Number(localStorage.getItem(INTERVAL_KEY)) || 30; } catch { return 30; }
+}
+export async function setSyncInterval(minutes: number) {
+  try { localStorage.setItem(INTERVAL_KEY, String(minutes)); } catch { /* stockage indisponible */ }
+  if (nearbyAvailable() && started) await Nearby.setBackground({ enabled: true, intervalMinutes: minutes }).catch(() => {});
+}
+// Date des données de ce téléphone (dernière version reçue du serveur ou d'un collègue).
+export function myDataAt(): number | null {
+  try {
+    const s = JSON.parse(localStorage.getItem(SNAP_KEY) ?? "null") as { serverTime?: string } | null;
+    return s?.serverTime ? new Date(s.serverTime).getTime() : null;
+  } catch { return null; }
+}
 const peers = new Map<string, Peer>();
 export const getPeers = () => [...peers.values()];
 export const peerForUser = (userId: number) => getPeers().find((p) => p.userId === userId && p.connected) ?? null;
@@ -343,7 +360,10 @@ async function onMessage(endpointId: string, data: string) {
   let msg: Record<string, unknown>;
   try { msg = JSON.parse(data); } catch { return; }
   if (msg.t === "hello") {
-    touchPeer(endpointId, { userId: Number(msg.userId) || null, connected: true });
+    touchPeer(endpointId, { userId: Number(msg.userId) || null, connected: true, dataAt: Number(msg.dataAt) || null });
+    // Collègue en retard : on lui renvoie tout de suite nos données plus récentes.
+    const mine = myDataAt();
+    if (mine && (!Number(msg.dataAt) || Number(msg.dataAt) < mine)) await Nearby.sendPacket({ endpointId }).catch(() => {});
   } else if (msg.t === "want") {
     const share = getShare();
     if (msg.kind === "bundle" && share.bundle && share.bundle.version === msg.version) {
@@ -441,7 +461,7 @@ export async function startP2P(me: { id: number; pending: boolean }): Promise<vo
       touchPeer(e.endpointId, { name: e.name ?? "", connected: true });
       const cached = loadCachedState();
       const d = await getDevice();
-      if (cached) await sendNearbyMessage(e.endpointId, { t: "hello", userId: cached.me.id, deviceId: d.deviceId }).catch(() => {});
+      if (cached) await sendNearbyMessage(e.endpointId, { t: "hello", userId: cached.me.id, deviceId: d.deviceId, dataAt: myDataAt() }).catch(() => {});
     });
     await Nearby.addListener("disconnected", (e) => touchPeer(e.endpointId, { connected: false }));
     await Nearby.addListener("message", (e) => void onMessage(e.endpointId, e.data));
@@ -453,7 +473,7 @@ export async function startP2P(me: { id: number; pending: boolean }): Promise<vo
   if (!started) {
     const d = await getDevice();
     await Nearby.start({ name: `G37:${me.id}:${d.deviceId.slice(2, 8)}` });
-    await Nearby.setBackground({ enabled: true, intervalMinutes: 120 }).catch(() => {});
+    await Nearby.setBackground({ enabled: true, intervalMinutes: syncIntervalMinutes() }).catch(() => {});
     started = true;
     setStatus({ running: true });
   }

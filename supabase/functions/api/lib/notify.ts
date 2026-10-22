@@ -1,16 +1,17 @@
 import { db } from "./db.ts";
 import { sendPush } from "./push.ts";
 
-async function pushToUsers(userIds: number[], title: string, body: string, tag: string, data?: Record<string, string | number>): Promise<boolean> {
+async function pushToUsers(userIds: number[], title: string, body: string, tag: string, data?: Record<string, string | number>, kind?: string): Promise<boolean> {
   if (!userIds.length) return false;
-  const rows = await db.selectFrom("pushTokens").select("token").where("userId", "in", userIds).execute();
+  const rows = await db.selectFrom("pushTokens").select(["token", "platform"]).where("userId", "in", userIds).execute();
   if (!rows.length) return false;
-  const { sent, dead } = await sendPush(rows.map((r: { token: string }) => r.token), { title, body, tag: `${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, data });
+  const uniqueTag = kind === "call" || kind === "call_end" ? tag : `${tag}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const { sent, dead } = await sendPush(rows.map((r: { token: string; platform: string | null }) => ({ token: r.token, platform: r.platform })), { title, body, tag: uniqueTag, data, kind });
   if (dead.length) await db.deleteFrom("pushTokens").where("token", "in", dead).execute();
   return sent > 0;
 }
 
-type EventAlert = { jobRoles: string[]; title: string; body: string; tag: string; excludeUserId?: number };
+type EventAlert = { jobRoles: string[]; title: string; body: string; tag: string; excludeUserId?: number; kind?: string; data?: Record<string, string | number> };
 
 export async function notifyRoles(alert: EventAlert): Promise<boolean> {
   try {
@@ -18,16 +19,16 @@ export async function notifyRoles(alert: EventAlert): Promise<boolean> {
     let q = db.selectFrom("users").select("id").where((eb: any) => eb.or([eb("role", "=", "admin"), eb("jobRole", "in", alert.jobRoles)]));
     if (alert.excludeUserId != null) q = q.where("id", "!=", alert.excludeUserId);
     const recipients = await q.execute();
-    return await pushToUsers(recipients.map((r: { id: number }) => r.id), alert.title, alert.body, alert.tag);
+    return await pushToUsers(recipients.map((r: { id: number }) => r.id), alert.title, alert.body, alert.tag, alert.data, alert.kind);
   } catch (e) {
     console.error("Notification non envoyée:", e);
     return false;
   }
 }
 
-export async function notifyUsers(alert: { userIds: number[]; title: string; body: string; tag: string; excludeUserId?: number; data?: Record<string, string | number> }): Promise<void> {
+export async function notifyUsers(alert: { userIds: number[]; title: string; body: string; tag: string; excludeUserId?: number; data?: Record<string, string | number>; kind?: string }): Promise<void> {
   try {
-    await pushToUsers(alert.userIds.filter((id) => id !== alert.excludeUserId), alert.title, alert.body, alert.tag, alert.data);
+    await pushToUsers(alert.userIds.filter((id) => id !== alert.excludeUserId), alert.title, alert.body, alert.tag, alert.data, alert.kind);
   } catch (e) {
     console.error("Notification ciblée non envoyée:", e);
   }
@@ -59,5 +60,5 @@ export async function notifyFault(alert: FaultAlert): Promise<void> {
   } catch (e) {
     console.error("Webhook Make panne non envoyé:", e);
   }
-  await pushToUsers(recipients.map((r: { id: number }) => r.id), `Panne M/C ${alert.machineNo}`, `${alert.issue} — signalée par ${alert.reportedBy}`, `panne-${alert.machineNo}`, { machineNo: alert.machineNo, tab: "pannes" });
+  await pushToUsers(recipients.map((r: { id: number }) => r.id), `Panne M/C ${alert.machineNo}`, `${alert.issue} — signalée par ${alert.reportedBy}`, `panne-${alert.machineNo}`, { machineNo: alert.machineNo, tab: "pannes" }, "alert");
 }

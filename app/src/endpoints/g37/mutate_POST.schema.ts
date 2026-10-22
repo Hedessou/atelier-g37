@@ -143,6 +143,14 @@ export const schema = z.discriminatedUnion("action", [
     to: z.number().int(),
     envelope: z.record(z.any()),
   }),
+  // Profil : prénom, nom, poste (texte libre) et photo.
+  z.object({
+    action: z.literal("profileInfo"),
+    firstName: z.string().trim().max(60),
+    lastName: z.string().trim().max(60),
+    postTitle: z.string().trim().max(80),
+    avatarKey: z.string().max(200).nullable().optional(),
+  }),
 ]);
 
 export type InputType = z.infer<typeof schema>;

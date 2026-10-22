@@ -1,6 +1,7 @@
 ext {
     androidxCoreVersion = project.hasProperty('androidxCoreVersion') ? rootProject.ext.androidxCoreVersion : '1.15.0'
     playServicesNearbyVersion = '19.3.0'
+    firebaseMessagingVersion = project.hasProperty('firebaseMessagingVersion') ? rootProject.ext.firebaseMessagingVersion : '24.1.0'
 }
 
 buildscript {
@@ -48,4 +49,5 @@ dependencies {
     implementation project(':capacitor-android')
     implementation "androidx.core:core:$androidxCoreVersion"
     implementation "com.google.android.gms:play-services-nearby:$playServicesNearbyVersion"
+    implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
 }

@@ -40,6 +40,7 @@ export const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("deleteUser"), userId: z.number().int() }),
   z.object({ action: z.literal("profile"), jobRole: z.string().min(1).max(40), code: z.string().max(40).nullable() }),
   z.object({ action: z.literal("dm"), id: z.string().regex(/^[A-Za-z0-9_-]{8,60}$/), to: z.number().int(), envelope: z.record(z.any()) }),
+  z.object({ action: z.literal("profileInfo"), firstName: z.string().trim().max(60), lastName: z.string().trim().max(60), postTitle: z.string().trim().max(80), avatarKey: z.string().max(200).nullable().optional() }),
 ]);
 
 export type InputType = z.infer<typeof schema>;
@@ -322,8 +323,8 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       }
       await db.insertInto("chatMessages").values({ id: msgId, author: me.displayName, message: text, createdAt: now, fileKey: file?.key ?? null, fileName: file?.name ?? null, fileType: file?.type ?? null, fileSize: file?.size ?? null, replyToId, replyToAuthor, replyToMessage, mentionUserIds: knownMentions }).execute();
       const forumRoles = Object.entries(g37.ROLES).filter(([, r]) => r.p.includes("forum")).map(([k]) => k);
-      await notifyRoles({ jobRoles: forumRoles, excludeUserId: me.id, tag: "discussion", title: `Maintenance R/F · ${me.displayName}`, body: text ? text.slice(0, 120) : `📎 ${file?.name ?? "fichier"}` });
-      if (knownMentions.length) await notifyUsers({ userIds: knownMentions, excludeUserId: me.id, tag: `mention-${knownMentions.join("-")}`, title: `${me.displayName} t'a mentionné dans Maintenance R/F`, body: text ? text.slice(0, 120) : `📎 ${file?.name ?? "fichier"}` });
+      await notifyRoles({ jobRoles: forumRoles, excludeUserId: me.id, tag: "discussion", kind: "chat", data: { tab: "discussion" }, title: `Maintenance R/F · ${me.displayName}`, body: text ? text.slice(0, 120) : `📎 ${file?.name ?? "fichier"}` });
+      if (knownMentions.length) await notifyUsers({ userIds: knownMentions, excludeUserId: me.id, kind: "chat", data: { tab: "discussion" }, tag: `mention-${knownMentions.join("-")}`, title: `${me.displayName} t'a mentionné dans Maintenance R/F`, body: text ? text.slice(0, 120) : `📎 ${file?.name ?? "fichier"}` });
       return ok();
     }
     case "chatDelete": {
@@ -375,8 +376,24 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       const inserted = await sql`INSERT INTO dm_messages (id, from_user, to_user, envelope, created_at)
         VALUES (${input.id}, ${me.id}, ${input.to}, ${sql.json(input.envelope)}, ${now}) ON CONFLICT (id) DO NOTHING RETURNING id`;
       if (inserted.length) await broadcastTo(await callTopic(input.to), "dm", { from: me.id, id: input.id });
-      if (inserted.length) await notifyUsers({ userIds: [input.to], tag: `dm-${me.id}`, title: `Message de ${me.displayName}`, body: "Nouveau message privé", data: { tab: "messages", peer: me.id } });
+      if (inserted.length) await notifyUsers({ userIds: [input.to], tag: `dm-${me.id}`, title: `Message de ${me.displayName}`, body: "Nouveau message privé", kind: "dm", data: { tab: "discussion", peer: me.id } });
       return ok();
+    }
+    case "profileInfo": {
+      const first = input.firstName.trim();
+      const last = input.lastName.trim();
+      const set: Record<string, unknown> = { firstName: first || null, lastName: last || null, postTitle: input.postTitle.trim() || null, updatedAt: now };
+      const full = [first, last].filter(Boolean).join(" ");
+      if (full) set.displayName = full.slice(0, 120);
+      if (input.avatarKey !== undefined) {
+        if (input.avatarKey === null) set.avatarUrl = null;
+        else {
+          if (!input.avatarKey.startsWith(`u${me.id}/`)) return deny("Photo invalide.", 400);
+          set.avatarUrl = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/public/avatars/${input.avatarKey}`;
+        }
+      }
+      await db.updateTable("users").set(set).where("id", "=", me.id).execute();
+      return ok("Profil enregistré.");
     }
     case "profile": {
       const role = g37.ROLES[input.jobRole];

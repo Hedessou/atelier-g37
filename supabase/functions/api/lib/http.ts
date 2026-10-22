@@ -3,7 +3,7 @@ import superjson from "superjson";
 export const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type, x-g37-token, x-client-info, apikey, authorization, x-app-version, x-push-token",
+  "Access-Control-Allow-Headers": "content-type, x-g37-token, x-client-info, apikey, authorization, x-app-version, x-push-token, x-g37-device",
   "Access-Control-Expose-Headers": "content-disposition, x-g37-sig",
   "Access-Control-Max-Age": "86400",
 };

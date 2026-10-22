@@ -1,5 +1,6 @@
 package com.atelierg37.nearby;
 
+import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -12,6 +13,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
@@ -27,14 +29,46 @@ public class G37SyncService extends Service {
     private static final String TAG = "G37Sync";
     private static final String CHANNEL = "g37_sync";
     private static final int NOTIFICATION_ID = 3707;
-    private static final long BURST_MS = 2 * 60 * 1000;
+    private static final long BURST_MS = 3 * 60 * 1000;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private long lastBurst = 0;
+
+    /** Réveil fiable même en veille profonde (Doze) : Android déclenche ce rappel même écran éteint. */
+    private void scheduleAlarm() {
+        try {
+            AlarmManager am = (AlarmManager) getSystemService(ALARM_SERVICE);
+            if (am == null) return;
+            Intent i = new Intent(this, G37SyncService.class).setAction("tick");
+            PendingIntent pi = PendingIntent.getService(this, 3708, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            long at = System.currentTimeMillis() + intervalMs();
+            if (Build.VERSION.SDK_INT >= 23) am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, at, pi);
+            else am.set(AlarmManager.RTC_WAKEUP, at, pi);
+        } catch (Exception e) {
+            Log.w(TAG, "Réveil non programmé", e);
+        }
+    }
+
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
+            handler.removeCallbacks(this);
+            if (System.currentTimeMillis() - lastBurst < intervalMs() / 2) {
+                handler.postDelayed(this, intervalMs());
+                return;
+            }
+            lastBurst = System.currentTimeMillis();
+            scheduleAlarm();
             NearbyEngine engine = NearbyEngine.get(G37SyncService.this);
-            if (!engine.isForeground()) engine.burst(BURST_MS);
+            if (!engine.isForeground()) {
+                // Le téléphone reste éveillé le temps de la recherche (Bluetooth, Wi-Fi direct, même Wi-Fi, point d'accès).
+                try {
+                    PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                    if (pm != null) pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "g37:sync").acquire(BURST_MS + 15000);
+                } catch (Exception ignored) {
+                }
+                engine.burst(BURST_MS);
+            }
             handler.postDelayed(this, intervalMs());
         }
     };
@@ -52,7 +86,7 @@ public class G37SyncService extends Service {
     }
 
     private long intervalMs() {
-        int minutes = NearbyEngine.get(this).prefs().getInt("interval", 120);
+        int minutes = NearbyEngine.get(this).prefs().getInt("interval", 30);
         return Math.max(15, minutes) * 60L * 1000L;
     }
 
@@ -72,9 +106,9 @@ public class G37SyncService extends Service {
             open = PendingIntent.getActivity(this, 0, launch, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         }
         Notification notification = new NotificationCompat.Builder(this, CHANNEL)
-                .setSmallIcon(getApplicationInfo().icon)
-                .setContentTitle("Atelier G37")
-                .setContentText("Synchronisation avec les collègues à proximité")
+                .setSmallIcon(R.drawable.ic_g37_notif)
+                .setContentTitle("Spinning R/F")
+                .setContentText("Synchronisation avec les collègues (Bluetooth, Wi-Fi, Internet)")
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_MIN)
                 .setContentIntent(open)
@@ -87,11 +121,12 @@ public class G37SyncService extends Service {
             stopSelf();
             return;
         }
-        handler.postDelayed(tick, 60 * 1000);
+        handler.postDelayed(tick, 20 * 1000);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && "tick".equals(intent.getAction())) handler.post(tick);
         return START_STICKY;
     }
 

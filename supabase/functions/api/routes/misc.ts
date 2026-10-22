@@ -61,6 +61,20 @@ export async function handleUpload(request: Request): Promise<Response> {
   } catch (error) { return sj({ error: error instanceof Error ? error.message : "Envoi impossible" }, 400); }
 }
 
+// Photo de profil : envoi direct vers le stockage « avatars » (lien signé, 2 Mo maximum).
+export async function handleAvatarUpload(request: Request): Promise<Response> {
+  let userId: number;
+  try { userId = (await getServerUserSession(request)).user.id; } catch { return json({ error: "Authentification requise" }, 401); }
+  const parsed = z.object({ contentType: z.enum(["image/jpeg", "image/png", "image/webp"]), sizeBytes: z.number().int().min(1).max(2 * 1024 * 1024) })
+    .safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return json({ error: "Photo trop lourde ou format non accepté (JPEG, PNG, WebP, 2 Mo max)." }, 400);
+  const ext = parsed.data.contentType === "image/png" ? "png" : parsed.data.contentType === "image/webp" ? "webp" : "jpg";
+  const key = `u${userId}/${nanoid(10)}.${ext}`;
+  const { data, error } = await supa.storage.from("avatars").createSignedUploadUrl(key);
+  if (error || !data) return json({ error: error?.message ?? "Envoi impossible" }, 500);
+  return json({ key, presignedUrl: data.signedUrl, headers: { "Content-Type": parsed.data.contentType, "x-upsert": "false" } });
+}
+
 export async function handleManual(request: Request): Promise<Response> {
   let userId: number;
   try { userId = (await getServerUserSession(request)).user.id; } catch { return json({ error: "Authentification requise." }, 401); }

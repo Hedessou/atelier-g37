@@ -29,4 +29,17 @@ else
   echo "ATTENTION : pas de google-services.json, les notifications ne marcheront pas"
 fi
 
+# Notifications : le service du plugin g37-nearby remplace celui de Capacitor (sonneries, écran d'appel app fermée).
+node -e '
+const fs = require("fs");
+const p = "android/app/src/main/AndroidManifest.xml";
+let s = fs.readFileSync(p, "utf8");
+if (!s.includes("xmlns:tools")) s = s.replace("<manifest ", "<manifest xmlns:tools=\"http://schemas.android.com/tools\" ");
+if (!s.includes("pushnotifications.MessagingService")) {
+  s = s.replace("</application>", "    <service android:name=\"com.capacitorjs.plugins.pushnotifications.MessagingService\" tools:node=\"remove\" />\n    </application>");
+}
+fs.writeFileSync(p, s);
+console.log("Manifeste : service de notifications G37 activé");
+'
+
 npx cap sync android

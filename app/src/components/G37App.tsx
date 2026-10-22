@@ -17,6 +17,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./Dialog";
 import { getP2PStatus, getPeers, p2pStatus, peersChanged, requestP2PPermissions, startP2P } from "../lib/p2p";
 import { nearbyAvailable } from "../lib/nearby";
 import { unreadFrom, useDms } from "../lib/dms";
+import { SettingsView } from "./SettingsView";
+import { ProfileView } from "./ProfileView";
+import { useAuth } from "../helpers/useAuth";
+import { playAlert } from "../lib/sounds";
+import { checkRinging } from "../lib/calls";
+import { Nearby as NativeNearby, nativeSoundsAvailable } from "../lib/nearby";
 import { saveBlob } from "../lib/files";
 import { isOnline } from "../lib/net";
 import { extractManualChunks, uploadManualChunks } from "../lib/manualPdf";
@@ -103,8 +109,11 @@ function fmtDur(a: Date | string | null, b: Date | string | null) {
   return (h ? `${h} h ` : "") + (m || !h ? `${m} min` : "");
 }
 
-// Deux brèves notes d'alerte, sans fichier son : le navigateur les synthétise.
+// Son d'alerte choisi dans les Paramètres (repli : notes synthétisées).
 function alertSound() {
+  void playAlert("alert");
+}
+export function legacyAlertSound() {
   try {
     const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if (!Ctx) return;
@@ -180,12 +189,32 @@ export const G37App = ({ className }: { className?: string }) => {
     return "accueil";
   });
   useEffect(() => {
-    const open = (e: Event) => { const k = (e as CustomEvent<string>).detail; if (TABS.some(([key]) => key === k)) setTab(k); };
+    const open = (e: Event) => {
+      const raw = (e as CustomEvent<string>).detail;
+      const k = raw === "messages" ? "discussion" : raw;
+      if (TABS.some(([key]) => key === k) || k === "parametres" || k === "profil") { setTab(k); window.scrollTo(0, 0); }
+    };
     window.addEventListener("g37:open-tab", open);
     return () => window.removeEventListener("g37:open-tab", open);
   }, []);
   const [openMachine, setOpenMachine] = useState<number | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const { logout } = useAuth();
+  // Autorisations importantes manquantes (affiche un rappel sur l'accueil).
+  const [permMissing, setPermMissing] = useState(0);
+  useEffect(() => {
+    const check = async () => {
+      if (!(await nativeSoundsAvailable())) return;
+      const st = await NativeNearby.getSystemStatus().catch(() => null);
+      if (!st) return;
+      const list = [st.notifications, st.nearby, st.microphone, st.bluetooth, st.battery, st.sdk >= 34 ? st.fullScreen : true, st.locationNeeded ? st.location : true];
+      setPermMissing(list.filter((x) => !x).length);
+    };
+    void check();
+    const onVis = () => { if (document.visibilityState === "visible") { void check(); void checkRinging(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
   const [msgSegment, setMsgSegment] = useState<"chats" | "calls">("chats");
   const dmList = useDms();
   // Mode sans Internet : état et collègues à proximité.
@@ -436,7 +465,14 @@ export const G37App = ({ className }: { className?: string }) => {
   }, [pushOn, lang]);
   // Une notification reçue site ouvert : on la montre et on la fait sonner.
   useEffect(() => onPushMessage((payload) => {
+    const kind = payload.data?.kind;
+    if (kind === "call" || kind === "call_end") { void checkRinging(); return; }
     if (!payload.title) return;
+    if (kind === "dm" || kind === "chat") {
+      void playAlert("message");
+      toast(`${payload.title}${payload.body ? ` — ${payload.body}` : ""}`);
+      return;
+    }
     alertSound();
     toast.error(`${payload.title}${payload.body ? ` — ${payload.body}` : ""}`);
   }), []);
@@ -1977,7 +2013,7 @@ export const G37App = ({ className }: { className?: string }) => {
   /* ---------- Rendu ---------- */
   const allowedTabs = g37.visibleTabs(me);
   const visibleTabs = TABS.filter(([key]) => key === "ia" ? !me.pending : (allowedTabs === null || allowedTabs.includes(key)));
-  const activeTab = visibleTabs.some(([key]) => key === tab) ? tab : (visibleTabs[0]?.[0] ?? "accueil");
+  const activeTab = tab === "parametres" || tab === "profil" ? tab : visibleTabs.some(([key]) => key === tab) ? tab : (visibleTabs[0]?.[0] ?? "accueil");
 
   // Menus regroupés : chaque onglet garde ses propres droits, seul l'affichage est regroupé.
   const GROUPS = [
@@ -2014,6 +2050,11 @@ export const G37App = ({ className }: { className?: string }) => {
           roleName={(k, f) => roleName(k, f)} />
       );
       case "ia": return renderAssistant();
+      case "parametres": return <SettingsView state={state} lang={lang} setLang={setLang} onBack={() => goto("accueil")} />;
+      case "profil": return (
+        <ProfileView state={state} lang={lang} save={save} onBack={() => goto("accueil")} onLogout={() => void logout()}
+          roleLabel={me.role === "admin" ? "Admin" : roleName(me.jobRole, g37.ROLES[me.jobRole]?.n ?? me.jobRole)} />
+      );
       case "magasin": return renderMagasin();
       case "acces": return renderAcces();
       default: return renderAccueil();
@@ -2053,6 +2094,7 @@ export const G37App = ({ className }: { className?: string }) => {
     { key: "plus", label: t("Plus", "More"), icon: ico("M5 12h.01M12 12h.01M19 12h.01"), badge: 0, active: !q.trim() && !mainKeys.includes(activeTab), go: () => setMoreOpen(true) },
   ];
   const moreItems = navItems.filter((n) => !mainKeys.includes(n.key) && !(n.members ?? []).some((m) => mainKeys.includes(m)));
+  const myAvatar = state.users.find((u) => u.id === me.id)?.avatarUrl ?? null;
   // Les travaux restent accessibles depuis l'onglet Pannes (groupe « Pannes & travaux »).
 
   const needsPost = me.jobRole === "helper" && me.role !== "admin";
@@ -2062,20 +2104,19 @@ export const G37App = ({ className }: { className?: string }) => {
       <header className={styles.topbar}>
         <div className={styles.topbarInner}>
           <div className={styles.brand} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span className={styles.brandLogo}>G37</span>
+            <span className={styles.brandLogo}>R/F</span>
             <span className={styles.brandText}>
-              <span className={styles.brandName}>Atelier G37</span>
-              <span className={styles.brandSub}>
+              <span className={styles.brandName}>Spinning R/F</span>
+              <span className={styles.brandAuthor}>
                 <span className={`${styles.dot} ${me.pending ? styles.dotWarn : ""}`} />{" "}
-                {me.displayName} · {me.role === "admin" ? "Admin" : roleName(me.jobRole, g37.ROLES[me.jobRole]?.n ?? me.jobRole)}{me.pending ? t(" (en attente)", " (pending)") : ""}
+                {me.displayName}{me.pending ? t(" (en attente)", " (pending)") : ""}
               </span>
             </span>
           </div>
           <div className={styles.grow} />
-          <div className={styles.row} style={{ gap: 4 }}>
-            <Button size="sm" variant={lang === "fr" ? "primary" : "outline"} onClick={() => setLang("fr")}>FR</Button>
-            <Button size="sm" variant={lang === "en" ? "primary" : "outline"} onClick={() => setLang("en")}>EN</Button>
-          </div>
+          <button className={styles.meBtn} onClick={() => goto("profil")} aria-label={t("Mon profil", "My profile")}>
+            {myAvatar ? <img src={myAvatar} alt="" /> : <span>{me.displayName.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("")}</span>}
+          </button>
         </div>
         <div className={styles.topbarInner} style={{ paddingTop: 0, gap: 8 }}>
           <div className={styles.search} style={{ flex: 1 }}>
@@ -2142,6 +2183,17 @@ export const G37App = ({ className }: { className?: string }) => {
             </div>
           </div>
         )}
+        {permMissing > 0 && activeTab === "accueil" && (
+          <div className={styles.card} style={{ marginTop: 16, borderColor: "#6b5418" }}>
+            <div className={`${styles.row} ${styles.between}`}>
+              <div style={{ minWidth: 0 }}>
+                <strong>{t(`${permMissing} autorisation(s) importante(s) à activer`, `${permMissing} important permission(s) to enable`)}</strong>
+                <div className={styles.meta}>{t("Pour que les notifications et les appels sonnent même app fermée, et que l'échange sans Internet marche.", "So notifications and calls ring even when closed, and offline exchange works.")}</div>
+              </div>
+              <Button variant="primary" onClick={() => goto("parametres")}>{t("Voir", "View")}</Button>
+            </div>
+          </div>
+        )}
         {p2p.available && p2p.needsPermission && (
           <div className={styles.card} style={{ marginTop: 16 }}>
             <div className={`${styles.row} ${styles.between}`}>
@@ -2178,12 +2230,24 @@ export const G37App = ({ className }: { className?: string }) => {
         <DialogContent>
           <DialogHeader><DialogTitle>{t("Plus", "More")}</DialogTitle></DialogHeader>
           <div className={styles.moreSheet}>
+            <button className={styles.moreItem} onClick={() => { setMoreOpen(false); goto("profil"); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg>
+              <span>{t("Profil", "Profile")}</span>
+            </button>
+            <button className={styles.moreItem} onClick={() => { setMoreOpen(false); goto("parametres"); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
+              <span>{t("Paramètres", "Settings")}</span>{permMissing > 0 && <span className={styles.navBadge}>{permMissing}</span>}
+            </button>
             {moreItems.map((it) => (
               <button key={it.key} className={styles.moreItem} onClick={() => { setMoreOpen(false); goto(it.members ? it.members[0] : it.key); }}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M9 12h6" /></svg>
                 <span>{lang === "fr" ? it.fr : it.en}</span>
               </button>
             ))}
+            <button className={`${styles.moreItem} ${styles.moreDanger}`} onClick={() => { setMoreOpen(false); if (window.confirm(t("Se déconnecter de ce téléphone ?", "Log out from this phone?"))) void logout(); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" /></svg>
+              <span>{t("Déconnexion", "Log out")}</span>
+            </button>
           </div>
         </DialogContent>
       </Dialog>

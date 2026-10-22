@@ -1,6 +1,7 @@
 import { sql } from "./db.ts";
 type ServiceAccount = { project_id: string; client_email: string; private_key: string; token_uri?: string };
-export type PushMessage = { title: string; body: string; tag?: string; data?: Record<string, string | number> };
+export type PushMessage = { title: string; body: string; tag?: string; kind?: string; data?: Record<string, string | number> };
+export type PushTarget = { token: string; platform: string | null };
 
 let cached: { token: string; exp: number } | null = null;
 
@@ -56,12 +57,18 @@ async function accessToken(sa: ServiceAccount): Promise<string> {
   return cached.token;
 }
 
-export async function sendPush(tokens: string[], msg: PushMessage): Promise<{ sent: number; dead: string[] }> {
+export async function sendPush(targets: Array<string | PushTarget>, msg: PushMessage): Promise<{ sent: number; dead: string[] }> {
   const sa = await serviceAccount();
-  if (!sa || tokens.length === 0) return { sent: 0, dead: [] };
+  const list: PushTarget[] = targets.map((t) => (typeof t === "string" ? { token: t, platform: null } : t));
+  if (!sa || list.length === 0) return { sent: 0, dead: [] };
   const bearer = await accessToken(sa);
-  const data: Record<string, string> = { title: msg.title, body: msg.body };
+  const kind = msg.kind ?? "alert";
+  const data: Record<string, string> = { title: msg.title, body: msg.body, kind, tag: msg.tag ?? "" };
   for (const [k, v] of Object.entries(msg.data ?? {})) data[k] = String(v);
+  // Ancienne app : notification affichée par Android (pas de fin d'appel à afficher).
+  const legacy = list.filter((t) => !(t.platform ?? "").startsWith("android3"));
+  const modern = list.filter((t) => (t.platform ?? "").startsWith("android3"));
+  const tokens = kind === "call_end" ? [] : legacy.map((t) => t.token);
   let sent = 0;
   const dead: string[] = [];
   for (let i = 0; i < tokens.length; i += 20) {
@@ -72,6 +79,25 @@ export async function sendPush(tokens: string[], msg: PushMessage): Promise<{ se
           headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
           body: JSON.stringify({ message: { token, notification: { title: msg.title, body: msg.body }, data,
             android: { priority: "HIGH", notification: { channel_id: "g37_alertes", sound: "default", tag: msg.tag ?? undefined, default_vibrate_timings: true } } } }),
+        });
+        if (res.ok) { sent++; return; }
+        const err = await res.text();
+        if (res.status === 404 || /UNREGISTERED|INVALID_ARGUMENT.*registration/i.test(err)) dead.push(token);
+        else console.error("FCM refusé:", res.status, err.slice(0, 300));
+      } catch (e) {
+        console.error("FCM erreur:", e);
+      }
+    }));
+  }
+  // Nouvelle app : « données seules », priorité haute ; le téléphone choisit la sonnerie, même app fermée.
+  const ttl = kind === "call" || kind === "call_end" ? "50s" : "86400s";
+  for (let i = 0; i < modern.length; i += 20) {
+    await Promise.all(modern.slice(i, i + 20).map(async ({ token }) => {
+      try {
+        const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ message: { token, data, android: { priority: "HIGH", ttl } } }),
         });
         if (res.ok) { sent++; return; }
         const err = await res.text();
