@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "259407408498",
+    "project_id": "atelier-g37-63c6c",
+    "storage_bucket": "atelier-g37-63c6c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:259407408498:android:b750ee4c4e6c0a8fefc1eb",
+        "android_client_info": {
+          "package_name": "com.atelierg37.maintenance"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA274o2bHHNZoOobPVJtpqRAtB-_sUq4wo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
