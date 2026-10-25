@@ -15,6 +15,7 @@ export const AppStatusBar = ({ lang }: { lang: "fr" | "en" }) => {
   const pending = usePendingCount();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const [update, setUpdate] = useState<UpdateStatus>(getUpdateStatus());
   useEffect(() => onUpdateStatus(setUpdate), []);
   const [near, setNear] = useState(() => getPeers().filter((p) => p.connected).length);
@@ -76,8 +77,13 @@ export const AppStatusBar = ({ lang }: { lang: "fr" | "en" }) => {
           {update.notes ? ` ${update.notes}` : ""}
         </span>
         {(update.viaStore || update.apkUrl || update.localApk) && (
-          <Button size="sm" onClick={() => void installNativeUpdate().catch((e) => toast.error(e instanceof Error ? e.message : String(e)))}>
-            {update.viaStore ? t("Mettre à jour", "Update") : update.localApk ? t("Installer", "Install") : t("Télécharger", "Download")}
+          <Button size="sm" disabled={installing} onClick={() => {
+            setInstalling(true);
+            void installNativeUpdate()
+              .catch((e) => toast.error(e instanceof Error ? e.message : String(e)))
+              .finally(() => setInstalling(false));
+          }}>
+            {installing ? t("Téléchargement…", "Downloading…") : update.viaStore ? t("Mettre à jour", "Update") : update.localApk ? t("Installer", "Install") : t("Télécharger", "Download")}
           </Button>
         )}
       </div>,

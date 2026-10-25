@@ -6,6 +6,7 @@ import { BUNDLE_VERSION } from "./config";
 import { isOnline, onOnlineChange } from "./net";
 import { openExternal } from "./links";
 import { Network } from "@capacitor/network";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Nearby, nearbyAvailable } from "./nearby";
 import { getManifest, noteServerVersion, setRunningVersions, updateFromPeer } from "./p2p";
 
@@ -146,6 +147,30 @@ export async function installNativeUpdate() {
     const r = await Nearby.installApk({ path: status.localApk });
     if (r.needsPermission) throw new Error("Autorise « Installer des applications inconnues » pour Atelier G37, puis touche à nouveau Installer.");
     return;
+  }
+  if (status.apkUrl && nearbyAvailable()) {
+    // L'app télécharge l'APK elle-même et vérifie son empreinte (signée par le serveur) avant d'installer :
+    // un téléchargement abîmé (réseau mobile coupé puis repris) est refait au lieu d'afficher « package invalide ».
+    const expected = getManifest()?.apkChecksum ?? null;
+    const path = "g37p2p/share/update.apk";
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await Filesystem.deleteFile({ path, directory: Directory.Data }).catch(() => {});
+        await Filesystem.downloadFile({ url: status.apkUrl, path, directory: Directory.Data, recursive: true });
+        const h = await Nearby.sha256({ path });
+        if (expected && h.hex !== expected) {
+          console.warn(`APK abîmé (essai ${attempt}) : ${h.hex}`);
+          continue;
+        }
+        const r = await Nearby.installApk({ path });
+        if (r.needsPermission) throw new Error("Autorise « Installer des applications inconnues » pour Atelier G37, puis touche à nouveau Installer.");
+        return;
+      } catch (e) {
+        if (e instanceof Error && e.message.startsWith("Autorise")) throw e;
+        console.warn(`Téléchargement de l'APK impossible (essai ${attempt}) :`, e);
+      }
+    }
+    throw new Error("Le téléchargement de la mise à jour a échoué 3 fois. Vérifie la connexion (de préférence en Wi-Fi) et réessaie.");
   }
   if (status.apkUrl) await openExternal(status.apkUrl);
 }
