@@ -116,7 +116,7 @@ Copie tout le bloc ci-dessous dans la nouvelle conversation, avec le zip `atelie
 - **Prod superviseur / Prod manager** : onglets Accueil (écran dédié), Calcul, Pannes, Gears, Messages (privé, appels, vidéo),
   Plus (Profil, Paramètres, Guide). Ils voient la liste des collègues (serveur `state.ts`).
 - **Guide** : Plus → « Connexion sans Internet » (`ConnectGuide.tsx`) avec l'état en direct du téléphone.
-- Serveur `api` v5 : routes et limites ci-dessus (messages chiffrés jusqu'à 200 000 caractères, relais 220 000),
+- Serveur `api` v5 **déployé le 25/10/2026** (23 fichiers vérifiés identiques au dépôt) : routes et limites ci-dessus (messages chiffrés jusqu'à 200 000 caractères, relais 220 000),
   envoi de fichiers permis à tout compte validé, drapeau `video` des appels (invitation + notification, pas de colonne en base).
 - `app/release.json` : versionCode natif 4, minimum 4 (tout le monde doit installer l'APK 4).
 - Vérifié ici : Java compilé contre android.jar 34 (+ bibliothèques simulées), codec testé (31 dB), TypeScript vérifié
