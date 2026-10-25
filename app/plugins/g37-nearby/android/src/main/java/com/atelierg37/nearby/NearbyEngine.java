@@ -36,6 +36,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,11 +45,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Cœur des échanges sans Internet (Google Nearby Connections : Bluetooth, BLE et Wi-Fi choisis automatiquement).
- * Partagé par l'app ouverte (module G37Nearby) et par le service d'arrière-plan (recherche toutes les 2 h).
- * Les données échangées sont opaques ici : l'app les chiffre et les signe avant de les confier au téléphone.
+ * Cœur des échanges sans Internet, partagé par l'app ouverte (module G37Nearby) et par le service d'arrière-plan.
+ *  - Google Nearby Connections : Bluetooth, BLE et Wi-Fi direct choisis automatiquement (identifiant « nearby »).
+ *  - Réseau Wi-Fi local (box sans Internet ou point d'accès d'un téléphone) : identifiants « lan:… » (LanEngine).
+ * Pour l'app, les deux se ressemblent : mêmes événements, mêmes envois de messages et de fichiers.
+ * Version 4 : le téléphone reste joignable app fermée (annonce permanente, recherche par rafales),
+ * affiche lui-même les appels de proximité entrants et les messages / pannes reçus des collègues proches.
  */
-public final class NearbyEngine {
+public final class NearbyEngine implements LanEngine.Callback {
     public interface Listener {
         void onEvent(String name, JSONObject data);
     }
@@ -67,12 +72,14 @@ public final class NearbyEngine {
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final LocalFileServer fileServer = new LocalFileServer();
+    private final LanEngine lan;
 
     private volatile Listener listener;
     private volatile boolean foreground = false;
     private String localName;
     private boolean advertising = false;
     private boolean discovering = false;
+    private long discoveryUntil = 0;
 
     private final Map<String, String> found = new ConcurrentHashMap<>();
     private final Map<String, String> connecting = new ConcurrentHashMap<>();
@@ -84,14 +91,43 @@ public final class NearbyEngine {
     private final Map<Long, File> outgoingTemp = new ConcurrentHashMap<>();
     private AudioLink audio;
 
+    /** Appel de proximité qui sonne alors que l'app est fermée (repris par l'app à l'ouverture). */
+    private volatile JSONObject ringing;
+
     private NearbyEngine(Context context) {
         ctx = context;
         client = Nearby.getConnectionsClient(context);
         localName = prefs().getString("name", null);
+        lan = new LanEngine(context, this, new File(baseDir(), "lan-tmp"));
     }
 
     SharedPreferences prefs() {
         return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    /** Rester joignable app fermée (appels et messages de proximité). Activé par défaut. */
+    boolean alwaysReachable() {
+        return prefs().getBoolean("always", true);
+    }
+
+    void setAlwaysReachable(boolean on) {
+        prefs().edit().putBoolean("always", on).apply();
+        if (!foreground) {
+            if (on) ensureBackground();
+            else stop();
+        }
+    }
+
+    /** Numéro du compte connecté sur ce téléphone (le nom annoncé est « G37:<id>:<appareil> »). */
+    int myUserId() {
+        String n = localName;
+        if (n == null) return -1;
+        String[] parts = n.split(":");
+        try {
+            return parts.length >= 2 ? Integer.parseInt(parts[1]) : -1;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     // ---------- Fichiers ----------
@@ -109,6 +145,10 @@ public final class NearbyEngine {
 
     File packetFile() {
         return new File(baseDir(), "packet.bin");
+    }
+
+    File hintsFile() {
+        return new File(baseDir(), "hints.json");
     }
 
     /** Chemin relatif au dossier de l'app (comme Directory.Data côté app). Refuse toute sortie du dossier. */
@@ -136,7 +176,7 @@ public final class NearbyEngine {
         }
     }
 
-    private static String readText(File f) throws Exception {
+    static String readText(File f) throws Exception {
         try (InputStream in = new FileInputStream(f)) {
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             copy(in, out);
@@ -160,6 +200,8 @@ public final class NearbyEngine {
 
     void setForeground(boolean value) {
         foreground = value;
+        lan.setBeaconInterval(value ? 2000 : 15000);
+        if (value) lan.announceNow();
     }
 
     boolean isForeground() {
@@ -176,44 +218,85 @@ public final class NearbyEngine {
         }
     }
 
+    String nameOf(String endpointId) {
+        if (LanEngine.isLan(endpointId)) return endpointId.substring(LanEngine.PREFIX.length());
+        String n = connected.get(endpointId);
+        if (n == null) n = found.get(endpointId);
+        return n == null ? "" : n;
+    }
+
     JSONObject info() {
         JSONArray peers = new JSONArray();
-        for (Map.Entry<String, String> e : connected.entrySet()) peers.put(obj("endpointId", e.getKey(), "name", e.getValue(), "connected", true));
+        for (Map.Entry<String, String> e : connected.entrySet()) peers.put(obj("endpointId", e.getKey(), "name", e.getValue(), "connected", true, "medium", "nearby"));
         for (Map.Entry<String, String> e : found.entrySet()) {
-            if (!connected.containsKey(e.getKey())) peers.put(obj("endpointId", e.getKey(), "name", e.getValue(), "connected", false));
+            if (!connected.containsKey(e.getKey())) peers.put(obj("endpointId", e.getKey(), "name", e.getValue(), "connected", false, "medium", "nearby"));
         }
-        return obj("running", advertising || discovering, "name", localName, "peers", peers, "sdk", Build.VERSION.SDK_INT);
+        Map<String, String> lanConnected = lan.connectedPeers();
+        for (Map.Entry<String, String> e : lanConnected.entrySet()) peers.put(obj("endpointId", e.getKey(), "name", e.getValue(), "connected", true, "medium", "wifi"));
+        for (Map.Entry<String, String> e : lan.foundPeers().entrySet()) {
+            if (!lanConnected.containsKey(e.getKey())) peers.put(obj("endpointId", e.getKey(), "name", e.getValue(), "connected", false, "medium", "wifi"));
+        }
+        return obj("running", advertising || discovering || lan.isRunning(), "advertising", advertising, "discovering", discovering,
+                "wifiLan", lan.isRunning(), "name", localName, "peers", peers, "sdk", Build.VERSION.SDK_INT, "always", alwaysReachable());
     }
 
     // ---------- Recherche et connexions ----------
-    synchronized void start(String name) {
+    private void setName(String name) {
         if (name != null && !name.isEmpty()) {
             localName = name;
             prefs().edit().putString("name", name).apply();
         }
+    }
+
+    /** App ouverte : annonce + recherche continues, Bluetooth et Wi-Fi local. */
+    synchronized void start(String name) {
+        setName(name);
         if (localName == null) return;
-        if (!advertising) {
-            advertising = true;
-            client.startAdvertising(localName, SERVICE_ID, lifecycle,
-                    new AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build())
-                    .addOnFailureListener(e -> {
-                        if (statusOf(e) != ConnectionsStatusCodes.STATUS_ALREADY_ADVERTISING) {
-                            advertising = false;
-                            emit("error", obj("where", "advertise", "message", String.valueOf(e.getMessage())));
-                        }
-                    });
+        startAdvertising();
+        startDiscovery();
+        discoveryUntil = Long.MAX_VALUE;
+        lan.start(localName);
+    }
+
+    /** App fermée, mode « toujours joignable » : on reste visible (annonce) et à l'écoute du Wi-Fi local. */
+    synchronized void ensureBackground() {
+        if (localName == null || !alwaysReachable()) return;
+        startAdvertising();
+        lan.start(localName);
+    }
+
+    private void startAdvertising() {
+        if (advertising) return;
+        advertising = true;
+        client.startAdvertising(localName, SERVICE_ID, lifecycle,
+                new AdvertisingOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build())
+                .addOnFailureListener(e -> {
+                    if (statusOf(e) != ConnectionsStatusCodes.STATUS_ALREADY_ADVERTISING) {
+                        advertising = false;
+                        emit("error", obj("where", "advertise", "message", String.valueOf(e.getMessage())));
+                    }
+                });
+    }
+
+    private void startDiscovery() {
+        if (discovering) return;
+        discovering = true;
+        client.startDiscovery(SERVICE_ID, discovery,
+                new DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build())
+                .addOnFailureListener(e -> {
+                    if (statusOf(e) != ConnectionsStatusCodes.STATUS_ALREADY_DISCOVERING) {
+                        discovering = false;
+                        emit("error", obj("where", "discover", "message", String.valueOf(e.getMessage())));
+                    }
+                });
+    }
+
+    private synchronized void stopDiscovery() {
+        try {
+            client.stopDiscovery();
+        } catch (Exception ignored) {
         }
-        if (!discovering) {
-            discovering = true;
-            client.startDiscovery(SERVICE_ID, discovery,
-                    new DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build())
-                    .addOnFailureListener(e -> {
-                        if (statusOf(e) != ConnectionsStatusCodes.STATUS_ALREADY_DISCOVERING) {
-                            discovering = false;
-                            emit("error", obj("where", "discover", "message", String.valueOf(e.getMessage())));
-                        }
-                    });
-        }
+        discovering = false;
     }
 
     synchronized void stop() {
@@ -224,6 +307,7 @@ public final class NearbyEngine {
         } catch (Exception e) {
             Log.w(TAG, "Arrêt", e);
         }
+        lan.stop();
         advertising = false;
         discovering = false;
         found.clear();
@@ -235,10 +319,19 @@ public final class NearbyEngine {
     /** Recherche courte lancée par le service d'arrière-plan. */
     void burst(long durationMs) {
         if (foreground) return;
-        start(null);
+        if (localName == null) return;
+        synchronized (this) {
+            startAdvertising();
+            startDiscovery();
+            lan.start(localName);
+            lan.announceNow();
+            discoveryUntil = System.currentTimeMillis() + durationMs;
+        }
         main.postDelayed(() -> {
-            if (!foreground) stop();
-        }, durationMs);
+            if (foreground || System.currentTimeMillis() < discoveryUntil) return;
+            if (alwaysReachable()) stopDiscovery(); // on reste joignable, seule la recherche s'arrête
+            else stop();
+        }, durationMs + 500);
     }
 
     private static int statusOf(Exception e) {
@@ -257,12 +350,17 @@ public final class NearbyEngine {
                 });
     }
 
+    /** Déjà relié à ce collègue par le Wi-Fi local : inutile d'ouvrir aussi une liaison Bluetooth. */
+    private boolean linkedByWifi(String peerName) {
+        return peerName != null && lan.isConnected(LanEngine.PREFIX + peerName);
+    }
+
     private final EndpointDiscoveryCallback discovery = new EndpointDiscoveryCallback() {
         @Override
         public void onEndpointFound(final String endpointId, DiscoveredEndpointInfo info) {
             String name = info.getEndpointName();
             found.put(endpointId, name);
-            emit("peerFound", obj("endpointId", endpointId, "name", name));
+            emit("peerFound", obj("endpointId", endpointId, "name", name, "medium", "nearby"));
             if (connected.containsKey(endpointId) || requested.contains(endpointId) || connecting.containsKey(endpointId)) return;
             // Un seul des deux téléphones demande la connexion (l'autre réessaie s'il ne se passe rien).
             if (localName != null && localName.compareTo(name) < 0) {
@@ -273,7 +371,7 @@ public final class NearbyEngine {
                             && !requested.contains(endpointId) && !connecting.containsKey(endpointId)) {
                         request(endpointId);
                     }
-                }, 12000);
+                }, 8000);
             }
         }
 
@@ -299,12 +397,16 @@ public final class NearbyEngine {
             if (!result.getStatus().isSuccess()) return;
             if (name == null) name = found.containsKey(endpointId) ? found.get(endpointId) : "";
             connected.put(endpointId, name);
-            emit("connected", obj("endpointId", endpointId, "name", name));
-            sendPacket(endpointId);
-            if (!foreground) {
-                // En arrière-plan : on échange les données puis on libère la liaison.
+            emit("connected", obj("endpointId", endpointId, "name", name, "medium", "nearby"));
+            // Même collègue déjà relié en Wi-Fi : les données passent déjà par là.
+            if (!linkedByWifi(name)) {
+                sendPacket(endpointId);
+                sendHints(endpointId);
+            }
+            if (!foreground && !alwaysReachable()) {
+                // En arrière-plan sans « toujours joignable » : on échange les données puis on libère la liaison.
                 main.postDelayed(() -> {
-                    if (!foreground) {
+                    if (!foreground && !alwaysReachable()) {
                         client.disconnectFromEndpoint(endpointId);
                         connected.remove(endpointId);
                     }
@@ -320,7 +422,40 @@ public final class NearbyEngine {
         }
     };
 
-    // ---------- Données ----------
+    // ---------- Wi-Fi local (LanEngine) ----------
+    @Override
+    public void onLanPeerFound(String id, String name) {
+        emit("peerFound", obj("endpointId", id, "name", name, "medium", "wifi"));
+    }
+
+    @Override
+    public void onLanPeerLost(String id) {
+        emit("peerLost", obj("endpointId", id));
+    }
+
+    @Override
+    public void onLanConnected(String id, String name) {
+        emit("connected", obj("endpointId", id, "name", name, "medium", "wifi"));
+        sendPacket(id);
+        sendHints(id);
+    }
+
+    @Override
+    public void onLanDisconnected(String id) {
+        emit("disconnected", obj("endpointId", id));
+    }
+
+    @Override
+    public void onLanMessage(String id, String text) {
+        handleText(id, text);
+    }
+
+    @Override
+    public void onLanFile(final String id, final JSONObject meta, final File file) {
+        io.execute(() -> storeIncoming(file, meta, id, true));
+    }
+
+    // ---------- Données (Nearby) ----------
     private final PayloadCallback payloads = new PayloadCallback() {
         @Override
         public void onPayloadReceived(String endpointId, Payload payload) {
@@ -337,7 +472,7 @@ public final class NearbyEngine {
                     }
                 } catch (JSONException ignored) {
                 }
-                emit("message", obj("endpointId", endpointId, "data", text));
+                handleText(endpointId, text);
             } else if (type == Payload.Type.FILE) {
                 incoming.put(payload.getId(), payload);
                 incomingFrom.put(payload.getId(), endpointId);
@@ -381,14 +516,12 @@ public final class NearbyEngine {
         if (payload == null) return;
         Payload.File f = payload.asFile();
         if (f == null) return;
-        String kind = meta != null ? meta.optString("kind", "file").replaceAll("[^a-z]", "") : "file";
-        String name = meta != null ? meta.optString("name", "") : "";
-        File dest = new File(inboxDir(), kind + "-" + System.currentTimeMillis() + "-" + Math.abs(id) + ".bin");
+        File tmp = new File(baseDir(), "in-" + System.nanoTime() + ".part");
         try {
             if (Build.VERSION.SDK_INT >= 29) {
                 Uri uri = f.asUri();
                 if (uri == null) return;
-                try (InputStream in = ctx.getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(dest)) {
+                try (InputStream in = ctx.getContentResolver().openInputStream(uri); OutputStream out = new FileOutputStream(tmp)) {
                     if (in == null) return;
                     copy(in, out);
                 }
@@ -399,20 +532,40 @@ public final class NearbyEngine {
             } else {
                 File javaFile = f.asJavaFile();
                 if (javaFile == null) return;
-                try (InputStream in = new FileInputStream(javaFile); OutputStream out = new FileOutputStream(dest)) {
+                try (InputStream in = new FileInputStream(javaFile); OutputStream out = new FileOutputStream(tmp)) {
                     copy(in, out);
                 }
                 javaFile.delete();
             }
-            String peerName = from == null ? "" : (connected.containsKey(from) ? connected.get(from) : (found.containsKey(from) ? found.get(from) : ""));
-            JSONObject info = obj("path", rel(dest), "kind", kind, "name", name, "endpointId", from, "peerName", peerName,
-                    "receivedAt", System.currentTimeMillis(), "size", dest.length());
+            storeIncoming(tmp, meta, from, false);
+        } catch (Exception e) {
+            Log.w(TAG, "Fichier reçu illisible", e);
+            tmp.delete();
+        }
+    }
+
+    /** Range un fichier reçu (Bluetooth ou Wi-Fi) dans la boîte de réception lue par l'app. */
+    private void storeIncoming(File tmp, JSONObject meta, String from, boolean viaWifi) {
+        String kind = meta != null ? meta.optString("kind", "file").replaceAll("[^a-z]", "") : "file";
+        if (kind.isEmpty()) kind = "file";
+        String name = meta != null ? meta.optString("name", "") : "";
+        File dest = new File(inboxDir(), kind + "-" + System.currentTimeMillis() + "-" + Math.abs(System.nanoTime() % 1000000) + ".bin");
+        try {
+            if (!tmp.renameTo(dest)) {
+                try (InputStream in = new FileInputStream(tmp); OutputStream out = new FileOutputStream(dest)) {
+                    copy(in, out);
+                }
+                tmp.delete();
+            }
+            JSONObject info = obj("path", rel(dest), "kind", kind, "name", name, "endpointId", from, "peerName", from == null ? "" : nameOf(from),
+                    "receivedAt", System.currentTimeMillis(), "size", dest.length(), "medium", viaWifi ? "wifi" : "nearby");
             if (meta != null) info.put("meta", meta);
             writeText(new File(dest.getPath() + ".json"), info.toString());
             emit("file", info);
         } catch (Exception e) {
-            Log.w(TAG, "Fichier reçu illisible", e);
+            Log.w(TAG, "Fichier non rangé", e);
             dest.delete();
+            tmp.delete();
         }
     }
 
@@ -421,6 +574,13 @@ public final class NearbyEngine {
         File tmp = new File(baseDir(), "out-" + System.nanoTime() + ".bin");
         try (InputStream in = new FileInputStream(source); OutputStream out = new FileOutputStream(tmp)) {
             copy(in, out);
+        }
+        if (LanEngine.isLan(endpointId)) {
+            final File sending = tmp;
+            lan.sendFile(endpointId, sending, obj("t", "file", "id", System.nanoTime(), "kind", kind, "name", name, "size", sending.length()));
+            // Le fichier temporaire est relu par la liaison Wi-Fi : on le supprime un peu plus tard.
+            main.postDelayed(sending::delete, 10 * 60 * 1000);
+            return;
         }
         Payload filePayload = Payload.fromFile(tmp);
         outgoingTemp.put(filePayload.getId(), tmp);
@@ -441,12 +601,153 @@ public final class NearbyEngine {
         });
     }
 
+    /** Petites annonces (« message de… », « panne M/C… ») affichées par le téléphone du collègue même app fermée. */
+    void sendHints(final String endpointId) {
+        final File hints = hintsFile();
+        if (!hints.exists() || hints.length() > 30000) return;
+        io.execute(() -> {
+            try {
+                JSONArray items = new JSONArray(readText(hints));
+                if (items.length() == 0) return;
+                sendMessage(endpointId, obj("t", "hints", "items", items).toString());
+            } catch (Exception e) {
+                Log.w(TAG, "Annonces non envoyées", e);
+            }
+        });
+    }
+
     void broadcastPacket() {
-        for (String id : connected.keySet()) sendPacket(id);
+        Set<String> names = new HashSet<>();
+        for (Map.Entry<String, String> e : lan.connectedPeers().entrySet()) {
+            names.add(e.getValue());
+            sendPacket(e.getKey());
+            sendHints(e.getKey());
+        }
+        for (Map.Entry<String, String> e : connected.entrySet()) {
+            if (names.contains(e.getValue())) continue;
+            sendPacket(e.getKey());
+            sendHints(e.getKey());
+        }
     }
 
     void sendMessage(String endpointId, String data) {
+        if (LanEngine.isLan(endpointId)) {
+            try {
+                lan.send(endpointId, data);
+            } catch (Exception e) {
+                Log.w(TAG, "Message Wi-Fi non envoyé", e);
+            }
+            return;
+        }
         client.sendPayload(endpointId, Payload.fromBytes(data.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    // ---------- Messages reçus ----------
+    private void handleText(String endpointId, String text) {
+        JSONObject o = null;
+        try {
+            o = new JSONObject(text);
+        } catch (JSONException ignored) {
+        }
+        if (o != null) {
+            String t = o.optString("t");
+            if ("hints".equals(t)) {
+                showHints(o);
+            } else if ("call".equals(t)) {
+                nativeCall(endpointId, o);
+            }
+        }
+        emit("message", obj("endpointId", endpointId, "data", text));
+    }
+
+    private boolean appVisible() {
+        return foreground && G37Notify.appForeground && listener != null;
+    }
+
+    /** Appel de proximité alors que l'app n'est pas à l'écran : sonnerie et écran d'appel par le téléphone. */
+    private void nativeCall(String endpointId, JSONObject o) {
+        String type = o.optString("type");
+        String callId = o.optString("callId");
+        if ("offer".equals(type) || "invite".equals(type)) {
+            if (appVisible()) return;
+            if (myUserId() > 0 && o.optInt("to", myUserId()) != myUserId()) return;
+            JSONObject r = obj("endpointId", endpointId, "callId", callId, "from", o.optInt("from", 0), "name", o.optString("name", "Collègue"),
+                    "video", o.optBoolean("video", false), "mode", "invite".equals(type) ? o.optString("mode", "rtc") : "nearby",
+                    "at", System.currentTimeMillis());
+            ringing = r;
+            Map<String, String> data = new HashMap<>();
+            data.put("room", callId);
+            data.put("name", r.optString("name"));
+            data.put("from", String.valueOf(r.optInt("from")));
+            data.put("group", "0");
+            data.put("via", LanEngine.isLan(endpointId) ? "wifi" : "proche");
+            data.put("endpoint", endpointId);
+            data.put("mode", r.optString("mode"));
+            data.put("video", r.optBoolean("video") ? "1" : "0");
+            main.post(() -> G37Notify.showIncomingCall(ctx, data));
+        } else if ("hangup".equals(type) || "cancel".equals(type)) {
+            JSONObject r = ringing;
+            if (r != null && callId.equals(r.optString("callId"))) {
+                ringing = null;
+                main.post(() -> {
+                    G37Notify.cancelCall(ctx);
+                    if (!appVisible()) G37Notify.showMissedCall(ctx, r.optString("name", "Collègue"), r.optBoolean("video"));
+                });
+            }
+        }
+    }
+
+    /** L'app reprend l'appel qui sonnait pendant qu'elle était fermée. */
+    JSONObject takeRinging() {
+        JSONObject r = ringing;
+        ringing = null;
+        if (r != null && System.currentTimeMillis() - r.optLong("at", 0) > 60000) return null;
+        return r;
+    }
+
+    void clearRinging(String callId) {
+        JSONObject r = ringing;
+        if (r != null && (callId == null || callId.equals(r.optString("callId")))) ringing = null;
+    }
+
+    private void showHints(JSONObject o) {
+        if (appVisible()) return; // l'app ouverte s'en occupe (paquet de données)
+        JSONArray items = o.optJSONArray("items");
+        if (items == null) return;
+        int me = myUserId();
+        SharedPreferences p = prefs();
+        Set<String> shown = new HashSet<>(p.getStringSet("hintsShown", new HashSet<>()));
+        long now = System.currentTimeMillis();
+        int count = 0;
+        for (int i = 0; i < items.length() && count < 8; i++) {
+            JSONObject h = items.optJSONObject(i);
+            if (h == null) continue;
+            String id = h.optString("id");
+            if (id.isEmpty() || shown.contains(id)) continue;
+            if (me > 0 && h.optInt("from", -2) == me) continue;
+            int to = h.optInt("to", -1);
+            if (to >= 0 && to != me) continue;
+            if (now - h.optLong("at", now) > 3L * 24 * 3600 * 1000) continue;
+            shown.add(id);
+            count++;
+            final Map<String, String> data = new HashMap<>();
+            String kind = h.optString("kind", "alert");
+            data.put("kind", kind);
+            data.put("title", h.optString("title", "Spinning R/F"));
+            data.put("body", h.optString("body", "") + " · reçu sans Internet");
+            data.put("tag", "near-" + id);
+            data.put("tab", h.optString("tab", "dm".equals(kind) || "chat".equals(kind) ? "discussion" : "pannes"));
+            if (h.has("peer")) data.put("peer", String.valueOf(h.optInt("peer")));
+            main.post(() -> G37Notify.showAlert(ctx, data));
+        }
+        if (count == 0) return;
+        if (shown.size() > 400) {
+            Set<String> trimmed = new HashSet<>();
+            int keep = 0;
+            for (String s : shown) if (keep++ < 300) trimmed.add(s);
+            shown = trimmed;
+        }
+        p.edit().putStringSet("hintsShown", shown).apply();
     }
 
     JSONArray listInbox() {
@@ -487,8 +788,9 @@ public final class NearbyEngine {
         return fileServer.serve(resolve(relative), name);
     }
 
-    // ---------- Appels de proximité ----------
+    // ---------- Appels de proximité (Bluetooth / Wi-Fi direct) ----------
     synchronized void startAudio(String endpointId) throws Exception {
+        if (LanEngine.isLan(endpointId)) throw new IllegalStateException("Appel Wi-Fi : passe par l'app (WebRTC)");
         if (audio == null) audio = new AudioLink(ctx);
         ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
         client.sendPayload(endpointId, Payload.fromStream(pipe[0]));

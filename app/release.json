@@ -1,5 +1,5 @@
 {
-  "nativeVersionCode": 3,
-  "minNativeVersionCode": 3,
-  "notes": "Spinning R/F : sonneries fortes, appels de groupe (25), haut-parleur, profil avec photo, paramètres, synchronisation sans Internet améliorée"
+  "nativeVersionCode": 4,
+  "minNativeVersionCode": 4,
+  "notes": "Version 4 : appels voix et vidéo sans Internet (Wi-Fi local, point d'accès, Bluetooth), connexion automatique entre téléphones, messagerie façon WhatsApp (photos, notes vocales, réponses), appels et messages reçus app fermée, écran Prod superviseur, guide de connexion"
 }

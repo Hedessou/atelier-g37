@@ -3,15 +3,15 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import type { OutputType as State } from "../endpoints/g37/state_GET.schema";
 import { ALERT_SOUNDS, CALL_SOUNDS, previewSound, setSoundPrefs, soundPrefs, type SoundPrefs } from "../lib/sounds";
-import { Nearby, nativeSoundsAvailable, nearbyAvailable, type SystemStatus } from "../lib/nearby";
-import { getPeers, myDataAt, peersChanged, requestP2PPermissions, setSyncInterval, startP2P, syncIntervalMinutes, type Peer } from "../lib/p2p";
+import { Nearby, nativeSoundsAvailable, nativeV4Available, nearbyAvailable, type SettingKey, type SystemStatus } from "../lib/nearby";
+import { getPeers, myDataAt, peersChanged, reachableEnabled, requestP2PPermissions, setReachable, setSyncInterval, startP2P, syncIntervalMinutes, type Peer } from "../lib/p2p";
 import { enablePush, isPushOptedIn, pushSupported } from "../helpers/pushClient";
 import { syncNow } from "../helpers/useG37";
 import { useOnline } from "../lib/net";
 import { BUNDLE_VERSION } from "../lib/config";
 import styles from "./SettingsView.module.css";
 
-type Props = { state: State; lang: "fr" | "en"; setLang: (l: "fr" | "en") => void; onBack: () => void };
+type Props = { state: State; lang: "fr" | "en"; setLang: (l: "fr" | "en") => void; onBack: () => void; onGuide?: () => void };
 
 const ago = (ms: number, fr: boolean) => {
   const m = Math.round(ms / 60000);
@@ -22,7 +22,7 @@ const ago = (ms: number, fr: boolean) => {
   return fr ? `il y a ${Math.round(h / 24)} j` : `${Math.round(h / 24)} d ago`;
 };
 
-export const SettingsView = ({ state, lang, setLang, onBack }: Props) => {
+export const SettingsView = ({ state, lang, setLang, onBack, onGuide }: Props) => {
   const fr = lang === "fr";
   const t = (a: string, b: string) => (fr ? a : b);
   const online = useOnline();
@@ -33,11 +33,15 @@ export const SettingsView = ({ state, lang, setLang, onBack }: Props) => {
   const [interval, setIntervalMin] = useState(syncIntervalMinutes());
   const [peers, setPeers] = useState<Peer[]>(getPeers());
   const [pushOn, setPushOn] = useState(isPushOptedIn());
+  const [v4, setV4] = useState(false);
+  const [reach, setReach] = useState(reachableEnabled());
+  const [autostartDone, setAutostartDone] = useState(() => { try { return localStorage.getItem("g37.autostartSeen") === "1"; } catch { return false; } });
 
   const refresh = useCallback(async () => {
     const ok = await nativeSoundsAvailable();
     setNative(ok);
     if (ok) setSys(await Nearby.getSystemStatus().catch(() => null));
+    setV4(await nativeV4Available());
     setPushOn(isPushOptedIn());
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -50,7 +54,7 @@ export const SettingsView = ({ state, lang, setLang, onBack }: Props) => {
   useEffect(() => peersChanged.on(setPeers), []);
 
   const update = async (p: Partial<SoundPrefs>) => setPrefs(await setSoundPrefs(p));
-  const open = async (which: Parameters<typeof Nearby.openSystemSetting>[0]["which"]) => {
+  const open = async (which: SettingKey) => {
     await Nearby.openSystemSetting({ which }).catch(() => toast.error(t("Réglage introuvable sur ce téléphone.", "Setting not found on this phone.")));
   };
 
@@ -86,14 +90,19 @@ export const SettingsView = ({ state, lang, setLang, onBack }: Props) => {
     rows.push(
       { key: "nearby", label: t("Appareils à proximité", "Nearby devices"), help: t("Échanges sans Internet (Bluetooth, Wi-Fi direct, même Wi-Fi, point d'accès).", "Offline exchange (Bluetooth, Wi-Fi Direct, same Wi-Fi, hotspot)."),
         ok: sys.nearby, action: async () => { await requestP2PPermissions(); await startP2P({ id: state.me.id, pending: state.me.pending }).catch(() => {}); await refresh(); } },
-      { key: "mic", label: t("Micro", "Microphone"), help: t("Pour les appels.", "For calls."), ok: sys.microphone,
+      { key: "mic", label: t("Micro", "Microphone"), help: t("Pour les appels et les notes vocales.", "For calls and voice notes."), ok: sys.microphone,
         action: async () => { await Nearby.requestNearbyPermissions({ microphone: true }).catch(() => {}); await refresh(); } },
+      ...(v4 ? [{ key: "cam", label: t("Caméra", "Camera"), help: t("Pour les appels vidéo et les photos.", "For video calls and photos."), ok: !!sys.camera,
+        action: async () => { await Nearby.requestNearbyPermissions({ microphone: true, camera: true }).catch(() => {}); await refresh(); } }] : []),
       { key: "bt", label: t("Bluetooth allumé", "Bluetooth on"), help: t("Indispensable pour trouver les collègues sans Internet.", "Needed to find colleagues offline."), ok: sys.bluetooth, action: () => open("bluetooth") },
     );
     if (sys.locationNeeded) rows.push({ key: "loc", label: t("Localisation activée", "Location on"), help: t("Exigée par Android pour la recherche Bluetooth.", "Required by Android for Bluetooth search."), ok: sys.location, action: () => open("location") });
     if (sys.sdk >= 34) rows.push({ key: "fs", label: t("Écran d'appel plein écran", "Full-screen call screen"), help: t("Pour que l'appel s'affiche et sonne écran verrouillé.", "So calls show and ring on the lock screen."), ok: sys.fullScreen, action: () => open("fullScreen") });
     rows.push(
       { key: "bat", label: t("Batterie sans restriction", "Unrestricted battery"), help: t("Sinon Android coupe la synchronisation et les appels en arrière-plan.", "Otherwise Android stops background sync and calls."), ok: sys.battery, action: () => open("battery") },
+      ...(v4 ? [{ key: "auto", label: t("Démarrage automatique", "Auto-start"),
+        help: t("Tecno, Infinix, itel, Xiaomi, Oppo, Vivo… : autorise « Spinning R/F » à démarrer seule, sinon les appels n'arrivent pas app fermée.", "Tecno, Infinix, itel, Xiaomi, Oppo, Vivo…: allow the app to auto-start, otherwise calls don't arrive when closed."),
+        ok: autostartDone, action: async () => { await open("autostart"); try { localStorage.setItem("g37.autostartSeen", "1"); } catch { /* */ } setAutostartDone(true); } }] : []),
       { key: "apk", label: t("Installer les mises à jour", "Install updates"), help: t("Pour installer une mise à jour reçue d'un collègue.", "To install an update received from a colleague."), ok: sys.installApps, action: () => open("installApps") },
     );
   }
@@ -156,6 +165,18 @@ export const SettingsView = ({ state, lang, setLang, onBack }: Props) => {
           {t("Avec Internet : immédiate. Sans Internet : le téléphone cherche les collègues (Bluetooth, Wi-Fi direct, même Wi-Fi, point d'accès) et vérifie qui a les dernières données.",
             "With Internet: instant. Offline: the phone looks for colleagues (Bluetooth, Wi-Fi Direct, same Wi-Fi, hotspot) and checks who has the latest data.")}
         </p>
+        {v4 && (
+          <label className={styles.switchRow}>
+            <span>
+              <strong>{t("Toujours joignable sans Internet", "Always reachable offline")}</strong>
+              <span className={styles.help}>{t("Même app fermée, le téléphone reste visible des collègues proches (Bluetooth, même Wi-Fi, point d'accès) : appels, messages et pannes arrivent sans Internet. Consomme un peu plus de batterie.", "Even when closed, the phone stays visible to nearby colleagues (Bluetooth, same Wi-Fi, hotspot): calls, messages and faults arrive offline. Uses a bit more battery.")}</span>
+            </span>
+            <input type="checkbox" checked={reach} onChange={(e) => { setReach(e.target.checked); void setReachable(e.target.checked); }} />
+          </label>
+        )}
+        {onGuide && (
+          <button className={styles.primary} style={{ marginBottom: 12 }} onClick={onGuide}>{t("Guide : connexion automatique sans Internet", "Guide: automatic offline connection")}</button>
+        )}
         <div className={styles.field}>
           <span>{t("Vérifier sans Internet toutes les", "Check offline every")}</span>
           <div className={styles.seg}>

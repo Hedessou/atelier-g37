@@ -50,7 +50,8 @@ export async function handleUpload(request: Request): Promise<Response> {
   try { userId = (await getServerUserSession(request)).user.id; } catch { return sj({ error: "Authentification requise" }, 401); }
   try {
     const me = await db.selectFrom("users").select(["role", "jobRole", "pending"]).where("id", "=", userId).executeTakeFirst();
-    if (!g37.can("forum", me)) return sj({ error: "Tu n'as pas le droit de publier dans la discussion." }, 403);
+    // Fichiers du groupe (droit « forum », vérifié à la publication) et pièces jointes chiffrées des messages privés.
+    if (!me || me.pending) return sj({ error: "Ton compte doit être validé par l'admin avant d'envoyer des fichiers." }, 403);
     const input = z.object({ fileName: z.string().min(1).max(200), contentType: z.string().min(1).max(120), sizeBytes: z.number().int().min(1).max(MAX_UPLOAD_BYTES) }).parse(await readSuperjson(request));
     if (FORBIDDEN.test(input.contentType)) return sj({ error: "Ce type de fichier n'est pas accepté (HTML, script ou XML)." }, 400);
     const safe = input.fileName.replace(/[^\w.\-]+/g, "_").slice(-80);
@@ -59,6 +60,18 @@ export async function handleUpload(request: Request): Promise<Response> {
     if (error || !data) return sj({ error: error?.message ?? "Envoi impossible" }, 500);
     return sj({ fileKey, presignedUrl: data.signedUrl, headers: { "Content-Type": input.contentType, "x-upsert": "false" } });
   } catch (error) { return sj({ error: error instanceof Error ? error.message : "Envoi impossible" }, 400); }
+}
+
+// Liens de téléchargement (1 h) des fichiers de messagerie : pièces jointes chiffrées des messages privés.
+export async function handleFileUrls(request: Request): Promise<Response> {
+  try { await getServerUserSession(request); } catch { return json({ error: "Authentification requise" }, 401); }
+  const parsed = z.object({ keys: z.array(z.string().min(6).max(300).regex(/^chat\/[\w.\-]+$/)).min(1).max(20) }).safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return json({ error: "Requête invalide" }, 400);
+  const { data, error } = await supa.storage.from(BUCKET_CHAT).createSignedUrls(parsed.data.keys, 3600);
+  if (error) return json({ error: error.message }, 500);
+  const urls: Record<string, string> = {};
+  (data ?? []).forEach((d) => { if (d.path && d.signedUrl) urls[d.path] = d.signedUrl; });
+  return json({ urls });
 }
 
 // Photo de profil : envoi direct vers le stockage « avatars » (lien signé, 2 Mo maximum).

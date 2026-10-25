@@ -97,3 +97,27 @@ Copie tout le bloc ci-dessous dans la nouvelle conversation, avec le zip `atelie
   sur réseau mobile faible, la qualité baisse. Solution plus tard : serveur audio (SFU, ex. LiveKit).
 - Le code Java/Android n'a pas pu être compilé ici (pas d'outils Android) : la compilation GitHub peut signaler
   une petite erreur à corriger.
+
+## Version 4 (25/10/2026) — sans Internet, vidéo, messagerie façon WhatsApp
+- **Wi-Fi local sans Internet / point d'accès** : nouveau moteur natif `LanEngine.java` (annonces UDP port 37037,
+  liaisons TCP port 37038, identifiants `lan:<nom>`). Mêmes événements que Nearby pour l'app (synchro, mises à jour, messages).
+  Liaison attachée au réseau Wi-Fi même si Android préfère les données mobiles (Wi-Fi « sans Internet »).
+- **Toujours joignable app fermée** (Paramètres, activé par défaut) : le service garde l'annonce Bluetooth + l'écoute Wi-Fi,
+  recherche active par rafales de 3 min. Appels de proximité entrants affichés par le téléphone (écran plein écran),
+  « appel manqué », et petites annonces `g37p2p/hints.json` → notifications « Message de… / Panne M/C… reçu sans Internet ».
+- **Appels** (`src/lib/calls.ts` réécrit) : Internet (salles, groupe 25) · Wi-Fi local (WebRTC sans serveur, voix + vidéo) ·
+  Bluetooth (voix 16 kHz ADPCM `Adpcm.java`, vidéo allégée JPEG). Vidéo : caméra on/off en cours d'appel, caméra avant/arrière,
+  relance ICE si le réseau change, micro gardé en arrière-plan (service type microphone), écran éteint contre l'oreille,
+  sortie casque/oreillette Bluetooth (`AudioRoute.java`).
+- **Messagerie** (`MessagesView.tsx`, `dms.ts`) : bulles avec date, ✓ / 🕓, réponse à un message, copier, supprimer pour moi,
+  photos (caméra/galerie), notes vocales, documents. ≤ 40 Ko : inclus dans le message chiffré (marche sans Internet) ;
+  plus lourd : chiffré puis déposé dans le stockage `chat/` (route `POST g37/file_urls` pour le relire).
+  Notifications regroupées par conversation ; un appui ouvre la conversation.
+- **Prod superviseur / Prod manager** : onglets Accueil (écran dédié), Calcul, Pannes, Gears, Messages (privé, appels, vidéo),
+  Plus (Profil, Paramètres, Guide). Ils voient la liste des collègues (serveur `state.ts`).
+- **Guide** : Plus → « Connexion sans Internet » (`ConnectGuide.tsx`) avec l'état en direct du téléphone.
+- Serveur `api` v5 : routes et limites ci-dessus (messages chiffrés jusqu'à 200 000 caractères, relais 220 000),
+  envoi de fichiers permis à tout compte validé, drapeau `video` des appels (invitation + notification, pas de colonne en base).
+- `app/release.json` : versionCode natif 4, minimum 4 (tout le monde doit installer l'APK 4).
+- Vérifié ici : Java compilé contre android.jar 34 (+ bibliothèques simulées), codec testé (31 dB), TypeScript vérifié
+  (bibliothèques simulées), paquet JS assemblé. **Pas encore** : compilation Gradle réelle et essai sur téléphones.

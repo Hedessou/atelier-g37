@@ -55,7 +55,7 @@ async function joinedIds(roomId: string): Promise<number[]> {
   return rows.map((r: any) => r.user_id);
 }
 
-async function inviteUsers(roomId: string, from: { id: number; displayName: string }, ids: number[], group: boolean) {
+async function inviteUsers(roomId: string, from: { id: number; displayName: string }, ids: number[], group: boolean, video = false) {
   const valid = ids.length ? await sql`SELECT id FROM users WHERE id = ANY(${ids}::int[]) AND id <> ${from.id}` : [];
   const list = valid.map((r: any) => r.id as number);
   if (!list.length) return [];
@@ -64,12 +64,13 @@ async function inviteUsers(roomId: string, from: { id: number; displayName: stri
       ON CONFLICT (room_id, user_id) DO UPDATE SET invited_at = now(), declined_at = NULL
       WHERE call_room_members.joined_at IS NULL OR call_room_members.left_at IS NOT NULL`;
   }
-  await tell(list, from, { type: "invite", roomId, group, name: from.displayName });
+  await tell(list, from, { type: "invite", roomId, group, video, name: from.displayName });
+  const kind = video ? "Appel vidéo" : "Appel";
   await notifyUsers({
     userIds: list, tag: `appel-${roomId}`, kind: "call",
-    title: group ? "Appel de groupe" : `Appel de ${from.displayName}`,
+    title: group ? `${kind} de groupe` : `${kind} de ${from.displayName}`,
     body: group ? `${from.displayName} t'invite à un appel de groupe` : "Appel Spinning R/F",
-    data: { room: roomId, from: from.id, name: from.displayName, group: group ? 1 : 0, tab: "discussion" },
+    data: { room: roomId, from: from.id, name: from.displayName, group: group ? 1 : 0, video: video ? 1 : 0, tab: "discussion" },
   });
   return list;
 }
@@ -83,7 +84,7 @@ async function endIfEmpty(roomId: string, from: { id: number; displayName: strin
   const ids = ringing.map((r: any) => r.user_id as number);
   if (ids.length) {
     await tell(ids, from, { type: "ended", roomId });
-    await notifyUsers({ userIds: ids, tag: `appel-${roomId}`, kind: "call_end", title: "Appel manqué", body: `Appel de ${from.displayName}`, data: { room: roomId } });
+    await notifyUsers({ userIds: ids, tag: `appel-${roomId}`, kind: "call_end", title: "Appel manqué", body: `Appel de ${from.displayName}`, data: { room: roomId, from: from.id, tab: "discussion", segment: "calls" } });
   }
   return true;
 }
@@ -94,6 +95,7 @@ const bodySchema = z.object({
   invite: z.array(z.number().int()).max(MAX_PARTICIPANTS).optional(),
   group: z.boolean().optional(),
   title: z.string().max(80).optional(),
+  video: z.boolean().optional(),
 });
 
 export async function handleCallRoom(request: Request): Promise<Response> {
@@ -109,11 +111,12 @@ export async function handleCallRoom(request: Request): Promise<Response> {
     if (!invite.length) return json({ error: "Choisis au moins un collègue." }, 400);
     if (invite.length + 1 > MAX_PARTICIPANTS) return json({ error: `${MAX_PARTICIPANTS} personnes au maximum.` }, 400);
     const group = parsed.data.group ?? invite.length > 1;
+    const video = parsed.data.video ?? false;
     const inserted = await sql`INSERT INTO call_rooms (id, created_by, is_group, title) VALUES (${id}, ${user.id}, ${group}, ${parsed.data.title ?? null})
       ON CONFLICT (id) DO NOTHING RETURNING id`;
     if (!inserted.length) return json({ error: "Appel déjà créé" }, 409);
     await sql`INSERT INTO call_room_members (room_id, user_id, invited_at, joined_at) VALUES (${id}, ${user.id}, now(), now())`;
-    await inviteUsers(id, user, invite, group);
+    await inviteUsers(id, user, invite, group, video);
     return json({ room: await roomView(id) });
   }
 
@@ -151,7 +154,7 @@ export async function handleCallRoom(request: Request): Promise<Response> {
   const [{ n }] = await sql`SELECT count(*)::int AS n FROM call_room_members WHERE room_id = ${id} AND (declined_at IS NULL) AND (left_at IS NULL)`;
   if (n + invite.length > MAX_PARTICIPANTS) return json({ error: `${MAX_PARTICIPANTS} personnes au maximum.` }, 400);
   await sql`UPDATE call_rooms SET is_group = true WHERE id = ${id}`;
-  await inviteUsers(id, user, invite, true);
+  await inviteUsers(id, user, invite, true, parsed.data.video ?? false);
   return json({ room: await roomView(id) });
 }
 

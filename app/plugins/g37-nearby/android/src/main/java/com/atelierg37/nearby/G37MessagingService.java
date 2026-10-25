@@ -35,7 +35,17 @@ public class G37MessagingService extends FirebaseMessagingService {
         }
         try {
             if (kind.equals("call")) G37Notify.showIncomingCall(this, data);
-            else if (kind.equals("call_end")) G37Notify.cancelCall(this);
+            else if (kind.equals("call_end")) {
+                // L'appelant a raccroché avant la réponse : « appel manqué », comme sur un vrai téléphone.
+                String room = data.get("room");
+                String ringing = G37Notify.ringingRoom(this);
+                G37Notify.cancelCall(this);
+                if (room != null && room.equals(ringing)) {
+                    String body = data.get("body");
+                    String name = body != null && body.startsWith("Appel de ") ? body.substring(9) : "Collègue";
+                    G37Notify.showMissedCall(this, name, "1".equals(data.get("video")));
+                }
+            }
             else G37Notify.showAlert(this, data);
         } catch (Exception e) {
             Log.e(TAG, "Notification non affichée", e);

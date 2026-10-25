@@ -84,7 +84,8 @@ export async function handleState(request: Request): Promise<Response> {
       lastChangeAt: lastChange[0]?.at ?? null,
       manualReady: Number(manual?.n ?? 0) > 0,
       me: me ?? { id: user.id, email: user.email, displayName: user.displayName, role: user.role, jobRole: "helper", team: null, pending: false, lastSeen: null },
-      users: allowed === null ? withSeen : withSeen.filter((u: Row) => u.id === user.id),
+      // Messagerie privée et appels : tout poste qui a l'onglet Messages voit la liste des collègues.
+      users: allowed === null || sees("discussion") ? withSeen : withSeen.filter((u: Row) => u.id === user.id),
       machines: machines.map((m: Row) => ({
         id: m.id, no: m.machineNo ?? noFromId(m.id), name: m.name, groupId: m.groupId ?? null, status: m.status,
         runG: m.runG ?? null, runH: m.runH ?? null, runCount: m.runCount == null ? null : String(m.runCount),

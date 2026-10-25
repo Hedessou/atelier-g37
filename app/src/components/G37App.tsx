@@ -18,6 +18,7 @@ import { getP2PStatus, getPeers, p2pStatus, peersChanged, requestP2PPermissions,
 import { nearbyAvailable } from "../lib/nearby";
 import { unreadFrom, useDms } from "../lib/dms";
 import { SettingsView } from "./SettingsView";
+import { ConnectGuide } from "./ConnectGuide";
 import { ProfileView } from "./ProfileView";
 import { useAuth } from "../helpers/useAuth";
 import { playAlert } from "../lib/sounds";
@@ -192,10 +193,19 @@ export const G37App = ({ className }: { className?: string }) => {
     const open = (e: Event) => {
       const raw = (e as CustomEvent<string>).detail;
       const k = raw === "messages" ? "discussion" : raw;
-      if (TABS.some(([key]) => key === k) || k === "parametres" || k === "profil") { setTab(k); window.scrollTo(0, 0); }
+      if (TABS.some(([key]) => key === k) || k === "parametres" || k === "profil" || k === "guide") { setTab(k); window.scrollTo(0, 0); }
+    };
+    // Notification d'un message privé : ouvrir directement la conversation ; appel manqué : l'onglet Appels.
+    const openPeer = (e: Event) => {
+      const d = (e as CustomEvent<{ peer?: number; segment?: string }>).detail ?? {};
+      if (d.segment === "calls") setMsgSegment("calls");
+      if (d.peer) { setMsgSegment("chats"); setPeerToOpen(Number(d.peer)); }
+      setTab("discussion");
+      window.scrollTo(0, 0);
     };
     window.addEventListener("g37:open-tab", open);
-    return () => window.removeEventListener("g37:open-tab", open);
+    window.addEventListener("g37:open-peer", openPeer);
+    return () => { window.removeEventListener("g37:open-tab", open); window.removeEventListener("g37:open-peer", openPeer); };
   }, []);
   const [openMachine, setOpenMachine] = useState<number | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -216,13 +226,17 @@ export const G37App = ({ className }: { className?: string }) => {
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
   const [msgSegment, setMsgSegment] = useState<"chats" | "calls">("chats");
+  const [peerToOpen, setPeerToOpen] = useState<number | null>(null);
   const dmList = useDms();
+  const myIdForDm = state?.me?.id;
+  const dmUnreadTotal = myIdForDm ? [...new Set(dmList.filter((m) => m.from !== myIdForDm).map((m) => m.from))].reduce((n, peer) => n + unreadFrom(peer, myIdForDm, dmList), 0) : 0;
   // Mode sans Internet : état et collègues à proximité.
   const [p2p, setP2p] = useState(getP2PStatus());
-  const [nearCount, setNearCount] = useState(() => getPeers().filter((p) => p.connected).length);
+  const countNear = (list: ReturnType<typeof getPeers>) => new Set(list.filter((p) => p.connected).map((p) => p.userId ?? p.endpointId)).size;
+  const [nearCount, setNearCount] = useState(() => countNear(getPeers()));
   useEffect(() => {
     const a = p2pStatus.on(setP2p);
-    const b = peersChanged.on((list) => setNearCount(list.filter((p) => p.connected).length));
+    const b = peersChanged.on((list) => setNearCount(countNear(list)));
     return () => { a(); b(); };
   }, []);
   const [q, setQ] = useState("");
@@ -544,6 +558,70 @@ export const G37App = ({ className }: { className?: string }) => {
   ].sort((a, b) => a.days - b.days).slice(0, 5);
   const whenColor = (n: number) => (n < 0 ? "#fca5a5" : n === 0 ? "#fcd34d" : "var(--g-dim)");
   const goto = (k: string) => { setTab(k); setOpenMachine(null); setQ(""); window.scrollTo(0, 0); };
+
+  // Accueil des postes de production (Prod superviseur / Prod manager) : l'essentiel en un coup d'œil.
+  const quickIco = (d: string) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
+  );
+  const renderProdHome = () => (
+    <div className={styles.stack}>
+      <div className={styles.statusCard}>
+        <div className={styles.statusTop}>
+          <strong>{t("État des métiers", "Machine status")}</strong>
+          <span className={styles.statusTotal}>{machines.length}</span>
+        </div>
+        <div className={styles.statusBar} aria-hidden="true">
+          {running > 0 && <span style={{ flex: running, background: "var(--g-ok)" }} />}
+          {stoppedCount > 0 && <span style={{ flex: stoppedCount, background: "var(--g-crit)" }} />}
+          {maintCount > 0 && <span style={{ flex: maintCount, background: "var(--g-warn)" }} />}
+        </div>
+        <div className={styles.statusLegend}>
+          <div><span className={styles.statusNum} style={{ color: "var(--g-ok)" }}>{running}</span>{t("En service", "Running")}</div>
+          <div><span className={styles.statusNum} style={{ color: "var(--g-crit)" }}>{stoppedCount}</span>{t("À l'arrêt", "Stopped")}</div>
+          <div><span className={styles.statusNum} style={{ color: "var(--g-warn)" }}>{maintCount}</span>{t("Maintenance", "Maintenance")}</div>
+        </div>
+      </div>
+      <div className={styles.tiles}>
+        <button className={`${styles.tile} ${openFaults.length ? styles.tileCrit : styles.tileOk}`} onClick={() => goto("pannes")}>
+          <span className={styles.tileNum}>{openFaults.length}</span><span>{t("Pannes ouvertes", "Open faults")}</span>
+        </button>
+        <button className={`${styles.tile} ${dmUnreadTotal ? styles.tileWarn : styles.tileOk}`} onClick={() => { setMsgSegment("chats"); goto("discussion"); }}>
+          <span className={styles.tileNum}>{dmUnreadTotal}</span><span>{t("Messages non lus", "Unread messages")}</span>
+        </button>
+      </div>
+      <div className={styles.quick} style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+        <button className={`${styles.quickBtn} ${styles.quickPrimary}`} onClick={() => goto("pannes")}>{quickIco("M12 3l10 18H2L12 3zM12 10v5M12 18h.01")}{t("Signaler", "Report")}</button>
+        <button className={styles.quickBtn} onClick={() => goto("calcul")}>{quickIco("M5 3h14v18H5zM8 7h8M8 12h2M12 12h2M16 12v5M8 16h2M12 16h2")}{t("Calcul", "Calculator")}</button>
+        <button className={styles.quickBtn} onClick={() => goto("gears")}>{quickIco("M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1")}Gears</button>
+        <button className={styles.quickBtn} onClick={() => { setMsgSegment("calls"); goto("discussion"); }}>{quickIco("M5 4h4l2 5-3 2a11 11 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2")}{t("Appeler", "Call")}</button>
+        <button className={styles.quickBtn} onClick={() => { setMsgSegment("calls"); goto("discussion"); }}>{quickIco("M3 6h13v12H3zM16 10l5-3v10l-5-3")}{t("Vidéo", "Video")}</button>
+        <button className={styles.quickBtn} onClick={() => { setMsgSegment("chats"); goto("discussion"); }}>{quickIco("M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z")}Message</button>
+      </div>
+      {stopped.length > 0 && (
+        <div className={styles.card}>
+          <div className={styles.head}><h2 className={styles.h2}>{t("Métiers à l'arrêt", "Stopped machines")}</h2><p className={styles.sub}>{stopped.length}</p></div>
+          {stopped.slice(0, 12).map((m) => (
+            <div key={m.no} className={`${styles.item} ${styles.row} ${styles.between}`}>
+              <strong>M/C {String(m.no).padStart(2, "0")}</strong>
+              <Pill tone={g37.M_STATUS[m.status]?.tone}>{statusName(m.status, g37.M_STATUS[m.status]?.n ?? m.status)}{m.stopReason ? ` · ${stopReasonName(m.stopReason)}` : ""}</Pill>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className={styles.card}>
+        <div className={styles.head}><h2 className={styles.h2}>{t("Dernières pannes", "Latest faults")}</h2><p className={styles.sub}>{openFaults.length} {t("ouverte(s)", "open")}</p></div>
+        {openFaults.length ? openFaults.slice(0, 6).map((f) => (
+          <div key={f.id} className={styles.item}>
+            <strong>M/C {f.machineNo} — {f.issue}</strong>
+            <div className={styles.meta}>{f.reportedBy ?? ""}{f.technician ? ` · ${t("technicien", "technician")} ${f.technician}` : ""}</div>
+          </div>
+        )) : <div className={styles.empty}>{t("Aucune panne ouverte.", "No open fault.")}</div>}
+      </div>
+      {nearCount > 0 && (
+        <div className={styles.note}>{t(`${nearCount} collègue(s) relié(s) en direct (Bluetooth / Wi-Fi) : messages, pannes et appels passent même sans Internet.`, `${nearCount} colleague(s) linked directly (Bluetooth / Wi-Fi): messages, faults and calls work even offline.`)}</div>
+      )}
+    </div>
+  );
 
   const renderAccueil = () => (
     <div className={styles.stack}>
@@ -2012,8 +2090,13 @@ export const G37App = ({ className }: { className?: string }) => {
 
   /* ---------- Rendu ---------- */
   const allowedTabs = g37.visibleTabs(me);
-  const visibleTabs = TABS.filter(([key]) => key === "ia" ? !me.pending : (allowedTabs === null || allowedTabs.includes(key)));
-  const activeTab = tab === "parametres" || tab === "profil" ? tab : visibleTabs.some(([key]) => key === tab) ? tab : (visibleTabs[0]?.[0] ?? "accueil");
+  const restricted = allowedTabs !== null;
+  // Postes à accès limité : les onglets dans l'ordre de leur poste (ex. Prod superviseur : Accueil, Calcul, Pannes, Gears, Messages).
+  const visibleTabs = restricted
+    ? allowedTabs.map((k) => TABS.find(([key]) => key === k)).filter((x): x is [string, string, string] => !!x)
+    : TABS.filter(([key]) => key === "ia" ? !me.pending : true);
+  const special = ["parametres", "profil", "guide"];
+  const activeTab = special.includes(tab) ? tab : visibleTabs.some(([key]) => key === tab) ? tab : (visibleTabs[0]?.[0] ?? "accueil");
 
   // Menus regroupés : chaque onglet garde ses propres droits, seul l'affichage est regroupé.
   const GROUPS = [
@@ -2047,17 +2130,19 @@ export const G37App = ({ className }: { className?: string }) => {
       case "quarts": return renderQuarts();
       case "discussion": return (
         <MessagesView state={state} lang={lang} save={save} renderGroup={renderDiscussion} segment={msgSegment} onSegment={setMsgSegment}
-          roleName={(k, f) => roleName(k, f)} />
+          roleName={(k, f) => roleName(k, f)} showGroup={!restricted || can("forum")}
+          openPeer={peerToOpen} onPeerOpened={() => setPeerToOpen(null)} />
       );
+      case "guide": return <ConnectGuide state={state} lang={lang} onBack={() => goto("parametres")} />;
       case "ia": return renderAssistant();
-      case "parametres": return <SettingsView state={state} lang={lang} setLang={setLang} onBack={() => goto("accueil")} />;
+      case "parametres": return <SettingsView state={state} lang={lang} setLang={setLang} onBack={() => goto("accueil")} onGuide={() => goto("guide")} />;
       case "profil": return (
         <ProfileView state={state} lang={lang} save={save} onBack={() => goto("accueil")} onLogout={() => void logout()}
           roleLabel={me.role === "admin" ? "Admin" : roleName(me.jobRole, g37.ROLES[me.jobRole]?.n ?? me.jobRole)} />
       );
       case "magasin": return renderMagasin();
       case "acces": return renderAcces();
-      default: return renderAccueil();
+      default: return restricted && (me.jobRole === "prodsup" || me.jobRole === "prodman") ? renderProdHome() : renderAccueil();
     }
   };
 
@@ -2085,8 +2170,23 @@ export const G37App = ({ className }: { className?: string }) => {
   );
   const inNav = (k: string) => !q.trim() && activeTab === k;
   const has = (k: string) => visibleTabs.some(([vk]) => vk === k);
-  const mainKeys = ["accueil", "machines", "pannes", "travaux", "discussion"];
-  const bottomItems = [
+  const NAV_ICON: Record<string, string> = {
+    accueil: "M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z",
+    calcul: "M5 3h14v18H5zM8 7h8M8 12h2M12 12h2M16 12v5M8 16h2M12 16h2",
+    pannes: "M12 3l10 18H2L12 3zM12 10v5M12 18h.01",
+    gears: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1",
+    discussion: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z",
+    machines: "M4 20V8l5 3V8l5 3V4h6v16zM8 16h2M13 16h2",
+  };
+  const mainKeys = restricted ? visibleTabs.map(([k]) => k).slice(0, 5) : ["accueil", "machines", "pannes", "travaux", "discussion"];
+  const restrictedItems = visibleTabs.slice(0, 5).map(([key, fr, en]) => ({
+    key, label: key === "discussion" ? "Messages" : lang === "fr" ? fr : en, icon: ico(NAV_ICON[key] ?? "M4 4h16v16H4z"),
+    badge: key === "pannes" ? openCount : key === "discussion" ? dmUnread : 0, active: inNav(key), go: () => goto(key),
+  }));
+  const bottomItems = restricted ? [
+    ...restrictedItems,
+    { key: "plus", label: t("Plus", "More"), icon: ico("M5 12h.01M12 12h.01M19 12h.01"), badge: permMissing, active: !q.trim() && special.includes(activeTab), go: () => setMoreOpen(true) },
+  ] : [
     { key: "accueil", label: t("Accueil", "Home"), icon: ico("M3 11l9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"), badge: 0, active: inNav("accueil"), go: () => goto("accueil") },
     ...(has("machines") ? [{ key: "machines", label: "Machines", icon: ico("M4 20V8l5 3V8l5 3V4h6v16zM8 16h2M13 16h2"), badge: 0, active: inNav("machines"), go: () => goto("machines") }] : []),
     ...(has("pannes") || has("travaux") ? [{ key: "pannes", label: t("Pannes", "Faults"), icon: ico("M12 3l10 18H2L12 3zM12 10v5M12 18h.01"), badge: openCount, active: inNav("pannes") || inNav("travaux"), go: () => goto(has("pannes") ? "pannes" : "travaux") }] : []),
@@ -2237,6 +2337,10 @@ export const G37App = ({ className }: { className?: string }) => {
             <button className={styles.moreItem} onClick={() => { setMoreOpen(false); goto("parametres"); }}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" /></svg>
               <span>{t("Paramètres", "Settings")}</span>{permMissing > 0 && <span className={styles.navBadge}>{permMissing}</span>}
+            </button>
+            <button className={styles.moreItem} onClick={() => { setMoreOpen(false); goto("guide"); }}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01M2 9a14 14 0 0 1 20 0" /></svg>
+              <span>{t("Connexion sans Internet", "Offline connection")}</span>
             </button>
             {moreItems.map((it) => (
               <button key={it.key} className={styles.moreItem} onClick={() => { setMoreOpen(false); goto(it.members ? it.members[0] : it.key); }}>

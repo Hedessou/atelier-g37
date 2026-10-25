@@ -370,7 +370,8 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
     case "dm": {
       if (me.pending) return deny("Ton compte doit être validé par l'admin avant d'écrire en privé.");
       if (input.to === me.id) return deny("Destinataire invalide.", 400);
-      if (JSON.stringify(input.envelope).length > 24000) return deny("Message trop long.", 400);
+      // Photos et notes vocales courtes incluses dans le message chiffré (envoi possible sans Internet).
+      if (JSON.stringify(input.envelope).length > 200000) return deny("Message trop long.", 400);
       const target = await db.selectFrom("users").select("id").where("id", "=", input.to).executeTakeFirst();
       if (!target) return deny("Collègue introuvable.", 404);
       const inserted = await sql`INSERT INTO dm_messages (id, from_user, to_user, envelope, created_at)

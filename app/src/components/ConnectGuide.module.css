@@ -1,0 +1,8 @@
+.btnRow { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
+.table { display: grid; grid-template-columns: 1.1fr 0.9fr 1.4fr; gap: 6px 10px; font-size: 0.8rem; color: #c7d3e2; line-height: 1.35; }
+.th { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--g-dim); }
+.details { gap: 6px; }
+.summary { cursor: pointer; font-weight: 700; font-size: 1rem; list-style-position: inside; padding: 2px 0; }
+.steps { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 0.88rem; line-height: 1.45; }
+.steps li::marker { color: var(--g-accent); font-weight: 700; }
+.steps button { margin-top: 6px; }

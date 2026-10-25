@@ -66,7 +66,7 @@ export async function handleRelay(request: Request): Promise<Response> {
   const userCache = new Map<number, any>();
   let changed = false;
   for (const op of ops) {
-    if (typeof op?.payload !== "string" || typeof op?.sig !== "string" || op.payload.length > 60000) continue;
+    if (typeof op?.payload !== "string" || typeof op?.sig !== "string" || op.payload.length > 220000) continue;
     let p: any;
     try { p = JSON.parse(op.payload); } catch { continue; }
     const opId = String(p?.opId ?? "").slice(0, 80);

@@ -77,21 +77,73 @@
 .threadTitle strong { font-size: 1rem; }
 .threadTitle span { font-size: 0.78rem; color: var(--g-dim); }
 
-.bubbles { display: flex; flex-direction: column; gap: 8px; min-height: 40vh; padding: 4px 0 8px; }
-.bubbleMine, .bubbleTheirs { max-width: 82%; padding: 9px 12px; border-radius: 14px; font-size: 0.9rem; line-height: 1.4; }
+.bubbles { display: flex; flex-direction: column; gap: 4px; min-height: 40vh; padding: 4px 0 8px; }
+.bubbleMine, .bubbleTheirs { max-width: 82%; padding: 6px 10px 5px; border-radius: 14px; font-size: 0.92rem; line-height: 1.4; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .bubbleMine { align-self: flex-end; background: var(--g-accent-soft); border: 1px solid #6b5418; border-bottom-right-radius: 4px; }
 .bubbleTheirs { align-self: flex-start; background: var(--g-surface); border: 1px solid var(--g-line); border-bottom-left-radius: 4px; }
 .bubbleText { white-space: pre-wrap; word-break: break-word; }
-.bubbleMeta { margin-top: 4px; font-size: 0.68rem; color: var(--g-dim); }
-
-.composer {
-  position: sticky; bottom: calc(80px + env(safe-area-inset-bottom)); display: flex; gap: 8px; align-items: flex-end;
-  padding: 8px 0; background: var(--g-bg);
-}
-.composerField { flex: 1; min-width: 0; display: flex; border-radius: 14px; background: var(--g-surface); border: 1px solid var(--g-line); padding: 10px 12px; }
-.composerField textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: var(--g-ink); font: inherit; font-size: 0.95rem; max-height: 120px; }
-.sendBtn { height: 44px; padding: 0 16px; border-radius: 12px; border: 0; background: var(--g-accent); color: var(--g-accent-ink); font: inherit; font-weight: 600; cursor: pointer; }
-.sendBtn:disabled { opacity: 0.5; cursor: default; }
+.bubbleMeta { margin-top: 2px; font-size: 0.66rem; color: var(--g-dim); text-align: right; white-space: nowrap; }
 
 .avatarImg { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
 .joinBtn { height: 40px; padding: 0 14px; border-radius: 20px; border: 0; background: #22c55e; color: #052e16; font: inherit; font-weight: 700; cursor: pointer; flex: none; }
+
+/* ---- Messagerie façon WhatsApp ---- */
+.threadWrap { gap: 8px; }
+.threadHeadSticky { position: sticky; top: 0; z-index: 5; background: var(--g-bg); padding: 6px 0; }
+.daySep { display: flex; justify-content: center; margin: 10px 0 6px; }
+.daySep span { font-size: 0.72rem; padding: 4px 10px; border-radius: 8px; background: var(--g-surface-2); color: #c7d3e2; text-transform: capitalize; }
+.quote { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; margin-bottom: 4px; border-radius: 8px; border-left: 3px solid var(--g-accent); background: rgba(0, 0, 0, 0.22); font-size: 0.78rem; min-width: 0; }
+.quote strong { color: var(--g-accent); font-size: 0.75rem; }
+.quote span { color: #c7d3e2; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.tick { color: #60a5fa; font-weight: 700; }
+.tickWait { font-size: 0.7rem; }
+.timeUnread { color: var(--g-accent); font-weight: 600; }
+.missedName { color: #fca5a5; }
+.missedIcon { display: inline-flex; width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; color: #fca5a5; }
+.missedIcon svg { width: 14px; height: 14px; }
+.callActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 6px; }
+.callActions .groupCard { padding: 12px; }
+.callActions .groupMarkBig { width: 40px; height: 40px; }
+.callActions .groupMarkBig svg { width: 20px; height: 20px; }
+
+.composerWrap {
+  position: sticky; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 4;
+  display: flex; flex-direction: column; gap: 6px; padding: 6px 0; background: var(--g-bg);
+}
+.composer { display: flex; gap: 6px; align-items: flex-end; }
+.composerField { flex: 1; min-width: 0; display: flex; border-radius: 22px; background: var(--g-surface); border: 1px solid var(--g-line); padding: 11px 14px; }
+.composerField textarea { flex: 1; resize: none; border: 0; outline: 0; background: transparent; color: var(--g-ink); font: inherit; font-size: 0.95rem; max-height: 120px; }
+.sendRound { width: 46px; height: 46px; flex: none; border-radius: 23px; border: 0; background: var(--g-accent); color: var(--g-accent-ink); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.sendRound svg { width: 22px; height: 22px; }
+.sendRound:disabled, .iconBtn:disabled { opacity: 0.45; cursor: default; }
+.replyBar { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 12px; background: var(--g-surface); border: 1px solid var(--g-line); }
+.replyBar .quote { flex: 1; margin: 0; }
+.iconBtnSmall { width: 32px; height: 32px; border-radius: 16px; border: 0; background: transparent; color: var(--g-dim); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+.iconBtnSmall svg { width: 16px; height: 16px; }
+.attachSheet { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px; border-radius: 16px; background: var(--g-surface); border: 1px solid var(--g-line); }
+.attachSheet button { display: flex; flex-direction: column; align-items: center; gap: 6px; background: none; border: 0; color: var(--g-ink); font: inherit; font-size: 0.8rem; cursor: pointer; padding: 4px; }
+.attachIcon { width: 50px; height: 50px; border-radius: 25px; display: inline-flex; align-items: center; justify-content: center; color: #fff; }
+.attachIcon svg { width: 24px; height: 24px; }
+.recording { flex: 1; display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 14px; border-radius: 23px; background: var(--g-surface); border: 1px solid var(--g-line); font-family: var(--font-family-monospace, monospace); font-size: 0.9rem; }
+.recDot { width: 10px; height: 10px; border-radius: 5px; background: #ef4444; animation: blink 1s infinite; }
+@keyframes blink { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .recDot { animation: none; } }
+
+.photo { display: block; width: min(240px, 62vw); max-height: 320px; padding: 0; border: 0; border-radius: 10px; overflow: hidden; background: #0b1524; cursor: pointer; margin-bottom: 4px; }
+.photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photoBlur { filter: blur(6px); }
+.photoWait { display: flex; align-items: center; justify-content: center; height: 100%; min-height: 120px; color: var(--g-dim); font-size: 0.78rem; padding: 8px; text-align: center; }
+.audio { width: min(240px, 62vw); height: 40px; margin-bottom: 2px; }
+.fileRow { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(0, 0, 0, 0.22); border: 0; color: var(--g-ink); font: inherit; font-size: 0.85rem; cursor: pointer; margin-bottom: 4px; max-width: 100%; text-align: left; }
+.fileName { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fileSize { font-size: 0.72rem; color: var(--g-dim); flex: none; }
+
+.sheetBackdrop { position: fixed; inset: 0; z-index: 2500; background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-end; justify-content: center; }
+.sheet { width: 100%; max-width: 480px; background: var(--g-surface); border-radius: 18px 18px 0 0; padding: 8px 8px calc(12px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; }
+.sheet button { height: 52px; border: 0; background: none; color: var(--g-ink); font: inherit; font-size: 1rem; text-align: left; padding: 0 16px; border-radius: 12px; cursor: pointer; }
+.sheet button:active { background: var(--g-surface-2); }
+.sheetDanger { color: #fca5a5 !important; }
+.viewer { position: fixed; inset: 0; z-index: 2600; background: rgba(0, 0, 0, 0.94); display: flex; align-items: center; justify-content: center; }
+.viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.viewerClose { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 12px; width: 44px; height: 44px; border-radius: 22px; border: 0; background: rgba(255, 255, 255, 0.12); color: #fff; display: inline-flex; align-items: center; justify-content: center; }
+.viewerClose svg { width: 20px; height: 20px; }

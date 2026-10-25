@@ -8,10 +8,14 @@ import android.bluetooth.BluetoothManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.ComponentName;
 import android.location.LocationManager;
-import android.media.AudioAttributes;
-import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.wifi.WifiManager;
+import android.media.AudioAttributes;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
@@ -58,6 +62,7 @@ import java.util.List;
                         Manifest.permission.ACCESS_COARSE_LOCATION
                 }),
                 @Permission(alias = "microphone", strings = { Manifest.permission.RECORD_AUDIO }),
+                @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }),
                 @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS })
         }
 )
@@ -67,6 +72,7 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
 
     private MediaPlayer player;
     private JSObject pendingLaunch;
+    private PowerManager.WakeLock proximityLock;
 
     @Override
     public void load() {
@@ -98,6 +104,8 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
             data.put("tab", tab);
             String peer = intent.getStringExtra("g37_peer");
             if (peer != null) data.put("peer", peer);
+            String segment = intent.getStringExtra("g37_segment");
+            if (segment != null) data.put("segment", segment);
         }
         if (room != null && !room.isEmpty()) {
             JSObject call = new JSObject();
@@ -106,6 +114,10 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
             call.put("from", intent.getStringExtra("g37_call_from"));
             call.put("action", intent.getStringExtra("g37_call_action"));
             call.put("group", intent.getBooleanExtra("g37_call_group", false));
+            call.put("via", intent.getStringExtra("g37_call_via"));
+            call.put("endpoint", intent.getStringExtra("g37_call_endpoint"));
+            call.put("mode", intent.getStringExtra("g37_call_mode"));
+            call.put("video", intent.getBooleanExtra("g37_call_video", false));
             try {
                 data.put("call", call);
             } catch (Exception ignored) {
@@ -127,6 +139,10 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
     @Override
     protected void handleOnResume() {
         G37Notify.appForeground = true;
+        try {
+            G37Notify.clearMessageGroups(getContext());
+        } catch (Exception ignored) {
+        }
         if (engine == null) return;
         engine.setListener(this);
         engine.setForeground(true);
@@ -144,6 +160,7 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
     protected void handleOnDestroy() {
         G37Notify.appForeground = false;
         stopPlayer();
+        releaseProximity();
         if (engine != null) {
             engine.setForeground(false);
             engine.setListener(null);
@@ -160,6 +177,11 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
         }
         pendingLaunch = null;
         SharedPreferences lp = getContext().getSharedPreferences(G37Notify.LAUNCH_PREFS, Context.MODE_PRIVATE);
+        try {
+            JSONObject ringing = engine.takeRinging();
+            if (ringing != null) r.put("ringing", new JSObject(ringing.toString()));
+        } catch (Exception ignored) {
+        }
         String declined = lp.getString("declined", null);
         if (declined != null && System.currentTimeMillis() - lp.getLong("declinedAt", 0) < 120000) r.put("declined", declined);
         lp.edit().remove("declined").remove("declinedAt").apply();
@@ -220,36 +242,122 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
     @PluginMethod
     public void setAudioRoute(PluginCall call) {
         boolean speaker = call.getBoolean("speaker", false);
-        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
-        if (am == null) { call.resolve(); return; }
-        am.setMode(AudioManager.MODE_IN_COMMUNICATION);
-        if (Build.VERSION.SDK_INT >= 31) {
-            if (speaker) {
-                for (AudioDeviceInfo d : am.getAvailableCommunicationDevices()) {
-                    if (d.getType() == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER) {
-                        am.setCommunicationDevice(d);
-                        break;
-                    }
-                }
-            } else {
-                am.clearCommunicationDevice();
-            }
-        } else {
-            am.setSpeakerphoneOn(speaker);
-        }
+        AudioRoute.apply(getContext(), speaker);
         engine.setSpeaker(speaker);
+        Activity a = getActivity();
+        if (a != null) a.runOnUiThread(() -> a.setVolumeControlStream(AudioManager.STREAM_VOICE_CALL));
         call.resolve();
     }
 
     @PluginMethod
     public void resetAudio(PluginCall call) {
-        AudioManager am = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
-        if (am != null) {
-            if (Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice();
-            else am.setSpeakerphoneOn(false);
-            am.setMode(AudioManager.MODE_NORMAL);
+        AudioRoute.reset(getContext());
+        Activity a = getActivity();
+        if (a != null) a.runOnUiThread(() -> a.setVolumeControlStream(AudioManager.USE_DEFAULT_STREAM_TYPE));
+        releaseProximity();
+        call.resolve();
+    }
+
+    /** Écran éteint quand le téléphone est collé à l'oreille (appel sans haut-parleur). */
+    @PluginMethod
+    public void setProximity(PluginCall call) {
+        boolean on = call.getBoolean("on", false);
+        if (!on) {
+            releaseProximity();
+            call.resolve();
+            return;
+        }
+        try {
+            PowerManager pm = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+            if (pm != null && pm.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+                if (proximityLock == null) proximityLock = pm.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "g37:proximity");
+                if (!proximityLock.isHeld()) proximityLock.acquire(3 * 60 * 60 * 1000L);
+            }
+        } catch (Exception ignored) {
         }
         call.resolve();
+    }
+
+    private void releaseProximity() {
+        try {
+            if (proximityLock != null && proximityLock.isHeld()) proximityLock.release();
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** Appel en cours : le service garde le micro actif même écran éteint ou app en arrière-plan. */
+    @PluginMethod
+    public void setInCall(PluginCall call) {
+        G37SyncService.setInCall(getContext(), call.getBoolean("active", false), call.getString("title"));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void cancelCallNotification(PluginCall call) {
+        G37Notify.cancelCall(getContext());
+        engine.clearRinging(call.getString("callId"));
+        call.resolve();
+    }
+
+    /** Toujours joignable sans Internet (app fermée) : annonce Bluetooth et écoute Wi-Fi permanentes. */
+    @PluginMethod
+    public void setReachable(PluginCall call) {
+        engine.setAlwaysReachable(call.getBoolean("enabled", true));
+        call.resolve(toJS(engine.info()));
+    }
+
+    /** État des réseaux locaux pour le guide de connexion. */
+    @PluginMethod
+    @SuppressWarnings("deprecation")
+    public void getNetworkStatus(PluginCall call) {
+        Context c = getContext();
+        JSObject r = new JSObject();
+        boolean wifiOn = false, wifiConnected = false, wifiInternet = false, hotspot = false, mobile = false;
+        String ssid = null;
+        try {
+            WifiManager wm = (WifiManager) c.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+            if (wm != null) {
+                wifiOn = wm.isWifiEnabled();
+                try {
+                    java.lang.reflect.Method m = wm.getClass().getMethod("isWifiApEnabled");
+                    hotspot = Boolean.TRUE.equals(m.invoke(wm));
+                } catch (Exception ignored) {
+                }
+                try {
+                    android.net.wifi.WifiInfo wi = wm.getConnectionInfo();
+                    if (wi != null && wi.getSSID() != null && !wi.getSSID().contains("unknown ssid")) ssid = wi.getSSID().replace("\"", "");
+                } catch (Exception ignored) {
+                }
+            }
+            ConnectivityManager cm = (ConnectivityManager) c.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                for (Network n : cm.getAllNetworks()) {
+                    NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+                    if (caps == null) continue;
+                    if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                        wifiConnected = true;
+                        if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) wifiInternet = true;
+                    }
+                    if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) mobile = true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        r.put("wifiOn", wifiOn);
+        r.put("wifiConnected", wifiConnected);
+        r.put("wifiInternet", wifiInternet);
+        r.put("ssid", ssid);
+        r.put("hotspot", hotspot);
+        r.put("mobileData", mobile);
+        JSArray ips = new JSArray();
+        for (String ip : LanEngine.localAddresses()) ips.put(ip);
+        r.put("addresses", ips);
+        r.put("manufacturer", Build.MANUFACTURER == null ? "" : Build.MANUFACTURER);
+        r.put("model", Build.MODEL == null ? "" : Build.MODEL);
+        JSONObject info = engine.info();
+        r.put("lanRunning", info.optBoolean("wifiLan"));
+        r.put("always", info.optBoolean("always"));
+        call.resolve(r);
     }
 
     // ---------- État du téléphone (autorisations importantes) ----------
@@ -288,6 +396,9 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
         r.put("locationNeeded", Build.VERSION.SDK_INT <= 32);
         r.put("nearby", allGranted(neededAliases(false)));
         r.put("microphone", getPermissionState("microphone") == PermissionState.GRANTED);
+        r.put("camera", getPermissionState("camera") == PermissionState.GRANTED);
+        r.put("always", engine.alwaysReachable());
+        r.put("manufacturer", Build.MANUFACTURER == null ? "" : Build.MANUFACTURER.toLowerCase());
         r.put("installApps", Build.VERSION.SDK_INT < 26 || c.getPackageManager().canRequestPackageInstalls());
         call.resolve(r);
     }
@@ -335,10 +446,50 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
             case "installApps":
                 i = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + pkg));
                 break;
+            case "wifi":
+                i = new Intent(Settings.ACTION_WIFI_SETTINGS);
+                break;
+            case "bluetoothSettings":
+                i = new Intent(Settings.ACTION_BLUETOOTH_SETTINGS);
+                break;
+            case "hotspot":
+                i = new Intent(Intent.ACTION_MAIN);
+                i.setComponent(new ComponentName("com.android.settings", "com.android.settings.TetherSettings"));
+                if (i.resolveActivity(getContext().getPackageManager()) == null) i = new Intent(Settings.ACTION_WIRELESS_SETTINGS);
+                break;
+            case "autostart":
+                i = autostartIntent();
+                break;
             default:
                 i = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + pkg));
         }
         openSettings(i, call);
+    }
+
+    /** Démarrage automatique / applications protégées des marques qui ferment les apps (Tecno, Infinix, itel, Xiaomi…). */
+    private Intent autostartIntent() {
+        String[][] candidates = {
+                { "com.transsion.phonemaster", "com.cyin.himgr.autostart.AutoStartActivity" },
+                { "com.transsion.phonemanager", "com.itel.autobootmanager.activity.AutoBootMgrActivity" },
+                { "com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity" },
+                { "com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity" },
+                { "com.coloros.safecenter", "com.coloros.safecenter.startupapp.StartupAppListActivity" },
+                { "com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity" },
+                { "com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity" },
+                { "com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity" },
+                { "com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity" },
+                { "com.huawei.systemmanager", "com.huawei.systemmanager.optimize.process.ProtectActivity" },
+                { "com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity" },
+                { "com.samsung.android.sm_cn", "com.samsung.android.sm.ui.battery.BatteryActivity" },
+                { "com.oneplus.security", "com.oneplus.security.chainlaunch.view.ChainLaunchAppListActivity" },
+                { "com.asus.mobilemanager", "com.asus.mobilemanager.autostart.AutoStartActivity" },
+        };
+        for (String[] c : candidates) {
+            Intent i = new Intent();
+            i.setComponent(new ComponentName(c[0], c[1]));
+            if (i.resolveActivity(getContext().getPackageManager()) != null) return i;
+        }
+        return new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getContext().getPackageName()));
     }
 
     @Override
@@ -351,6 +502,10 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
 
     // ---------- Autorisations ----------
     private String[] neededAliases(boolean microphone) {
+        return neededAliases(microphone, false);
+    }
+
+    private String[] neededAliases(boolean microphone, boolean camera) {
         List<String> list = new ArrayList<>();
         int sdk = Build.VERSION.SDK_INT;
         if (sdk >= 31) list.add("bluetooth");
@@ -360,6 +515,7 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
         }
         if (sdk <= 32) list.add("location");
         if (microphone) list.add("microphone");
+        if (camera) list.add("camera");
         return list.toArray(new String[0]);
     }
 
@@ -374,6 +530,7 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
         JSObject r = new JSObject();
         r.put("nearby", allGranted(neededAliases(false)));
         r.put("microphone", getPermissionState("microphone") == PermissionState.GRANTED);
+        r.put("camera", getPermissionState("camera") == PermissionState.GRANTED);
         return r;
     }
 
@@ -384,7 +541,7 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
 
     @PluginMethod
     public void requestNearbyPermissions(PluginCall call) {
-        String[] aliases = neededAliases(call.getBoolean("microphone", false));
+        String[] aliases = neededAliases(call.getBoolean("microphone", false), call.getBoolean("camera", false));
         if (aliases.length == 0 || allGranted(aliases)) {
             call.resolve(permissionResult(call));
             return;

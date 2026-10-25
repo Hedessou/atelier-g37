@@ -5,11 +5,11 @@ import { Capacitor } from "@capacitor/core";
 import { useG37, G37_STATE_KEY } from "../helpers/useG37";
 import { useOnline } from "../lib/net";
 import { realtime } from "../lib/realtime";
-import { flushRelay, getSecrets, processInbox, refreshSecrets, registerDevice, startP2P, stopP2P } from "../lib/p2p";
-import { refreshDms } from "../lib/dms";
+import { ensureP2PListeners, flushRelay, getSecrets, processInbox, refreshSecrets, registerDevice, startP2P, stopP2P } from "../lib/p2p";
+import { onNewDm, refreshDms } from "../lib/dms";
 import { checkRinging, declineFromNotification, handleLaunchCall, onInternetSignal, setCallIdentity } from "../lib/calls";
-import { Nearby, nativeSoundsAvailable, type LaunchData } from "../lib/nearby";
-import { applySoundPrefs } from "../lib/sounds";
+import { Nearby, isWifiEndpoint, nativeSoundsAvailable, type LaunchData, type RingingCall } from "../lib/nearby";
+import { applySoundPrefs, playAlert } from "../lib/sounds";
 
 // Fait tourner en fond : synchro sans Internet, messages privés, appels entrants.
 export const P2PBridge = () => {
@@ -45,22 +45,34 @@ export const P2PBridge = () => {
 
   useEffect(() => () => { void stopP2P(); }, []);
 
-  // Sonneries choisies, ouverture depuis une notification (onglet, appel à afficher ou à prendre).
+  // Message privé reçu sans Internet (app ouverte) : petit son.
+  useEffect(() => onNewDm(() => { if (document.visibilityState === "visible") void playAlert("message"); }), []);
+
+  // Sonneries choisies, ouverture depuis une notification (onglet, conversation, appel à afficher ou à prendre).
   useEffect(() => {
     if (!myId) return;
     let off: { remove: () => Promise<void> } | null = null;
     const handle = (l?: LaunchData) => {
       if (!l) return;
       if (l.call?.room) void handleLaunchCall(l.call);
+      else if (l.peer || l.segment) window.dispatchEvent(new CustomEvent("g37:open-peer", { detail: { peer: l.peer ? Number(l.peer) : undefined, segment: l.segment } }));
       else if (l.tab) window.dispatchEvent(new CustomEvent("g37:open-tab", { detail: l.tab }));
     };
     (async () => {
       await applySoundPrefs();
       if (!(await nativeSoundsAvailable())) return;
+      await ensureP2PListeners().catch(() => {});
       off = await Nearby.addListener("launch", handle);
-      const r = await Nearby.consumeLaunch().catch(() => ({} as { launch?: LaunchData; declined?: string }));
+      const r = await Nearby.consumeLaunch().catch(() => ({} as { launch?: LaunchData; declined?: string; ringing?: RingingCall }));
       if (r.declined) void declineFromNotification(r.declined);
-      handle(r.launch);
+      if (r.launch) handle(r.launch);
+      else if (r.ringing) {
+        // Appel sans Internet qui sonnait pendant que l'app était fermée (ouverte sans toucher la notification).
+        void handleLaunchCall({
+          room: r.ringing.callId, name: r.ringing.name, from: String(r.ringing.from), action: "ring",
+          via: isWifiEndpoint(r.ringing.endpointId) ? "wifi" : "proche", endpoint: r.ringing.endpointId, mode: r.ringing.mode, video: r.ringing.video,
+        });
+      }
     })().catch(() => {});
     return () => { void off?.remove(); };
   }, [myId]);

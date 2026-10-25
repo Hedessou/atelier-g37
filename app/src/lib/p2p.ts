@@ -1,5 +1,5 @@
 import superjson from "superjson";
-import { Directory, Filesystem } from "@capacitor/filesystem";
+import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import type { OutputType as State } from "../endpoints/g37/state_GET.schema";
 import { g37 } from "../helpers/g37";
 import { getDevice, openPacket, sealPacket, signText, toB64, fromB64, verifyText, deviceIdSync } from "./crypto";
@@ -8,7 +8,7 @@ import {
   saveCachedState, setOutboxSignatures, type RelayOp,
 } from "./offline";
 import { isOnline } from "./net";
-import { Nearby, nearbyAvailable, type InboxFile } from "./nearby";
+import { Nearby, nearbyAvailable, nativeV4Available, type InboxFile, type Medium } from "./nearby";
 
 // ---------------------------------------------------------------------------
 // Mode « sans Internet » : les téléphones proches (Bluetooth / Wi-Fi) s'échangent automatiquement
@@ -30,7 +30,7 @@ function bus<T>() {
 export const stateAdopted = bus<State>();
 export const peersChanged = bus<Peer[]>();
 export const dmFromRelay = bus<{ opPayload: RelayOp }>();
-export const callMessage = bus<{ endpointId: string; userId: number | null; msg: Record<string, unknown> }>();
+export const callMessage = bus<{ endpointId: string; userId: number | null; medium: Medium; msg: Record<string, unknown> }>();
 export const p2pStatus = bus<P2PStatus>();
 export const updateFromPeer = bus<{ kind: "bundle" | "apk"; path: string; version: string; notes: string | null }>();
 
@@ -266,10 +266,38 @@ async function writePacket() {
     };
     const bytes = await sealPacket(secrets.p2pKey, packet);
     await Filesystem.writeFile({ path: PACKET_PATH, data: toB64(bytes), directory: Directory.Data, recursive: true });
+    await writeHints(state.me).catch(() => {});
     if (status.running) await Nearby.broadcastPacket();
   } catch (e) {
     console.warn("Paquet non préparé :", e);
   }
+}
+
+// Petites annonces lues par le téléphone du collègue même app fermée (notification « message de… », « panne… »).
+// Seulement ce qui n'est pas encore arrivé au serveur ; aucun contenu de message privé (chiffré).
+type Hint = { id: string; kind: "dm" | "chat" | "alert"; to: number; from: number; peer?: number; title: string; body: string; tab: string; at: number };
+const HINTS_PATH = "g37p2p/hints.json";
+async function writeHints(me: State["me"]) {
+  const now = Date.now();
+  const list: Hint[] = [];
+  const add = (opId: string, userId: number, name: string, clientAt: string, input: { action: string } & Record<string, unknown>) => {
+    const at = new Date(clientAt).getTime() || now;
+    if (now - at > 3 * 86400000) return;
+    if (input.action === "dm") {
+      list.push({ id: opId, kind: "dm", to: Number(input.to), from: userId, peer: userId, title: `Message de ${name}`, body: "Nouveau message privé", tab: "discussion", at });
+    } else if (input.action === "faultAdd") {
+      list.push({ id: opId, kind: "alert", to: -1, from: userId, title: `Panne M/C ${input.machineNo}`, body: `${String(input.issue ?? "").slice(0, 90)} — ${name}`, tab: "pannes", at });
+    } else if (input.action === "chat") {
+      const text = String(input.message ?? "").slice(0, 90) || "📎 fichier";
+      list.push({ id: opId, kind: "chat", to: -1, from: userId, title: `Maintenance R/F · ${name}`, body: text, tab: "discussion", at });
+    }
+  };
+  for (const o of outbox()) add(o.opId, me.id, me.displayName, o.clientAt, o.input as never);
+  for (const o of relayOps()) add(o.opId, o.userId, o.name || "Collègue", o.clientAt, o.input as never);
+  list.sort((a, b) => b.at - a.at);
+  let out = list.slice(0, 40);
+  while (out.length && JSON.stringify(out).length > 28000) out = out.slice(0, out.length - 5);
+  await Filesystem.writeFile({ path: HINTS_PATH, data: JSON.stringify(out), directory: Directory.Data, encoding: Encoding.UTF8, recursive: true });
 }
 
 async function mergeOps(ops: WireOp[], state: State) {
@@ -280,7 +308,7 @@ async function mergeOps(ops: WireOp[], state: State) {
   const myDevice = deviceIdSync();
   const fresh: RelayOp[] = [];
   for (const w of ops.slice(0, 2000)) {
-    if (typeof w?.payload !== "string" || typeof w?.sig !== "string" || w.payload.length > 60000) continue;
+    if (typeof w?.payload !== "string" || typeof w?.sig !== "string" || w.payload.length > 230000) continue;
     let p: { opId: string; userId: number; deviceId: string; clientAt: string; input: RelayOp["input"]; name?: string };
     try { p = JSON.parse(w.payload); } catch { continue; }
     if (!p?.opId || applied.has(p.opId) || own.has(p.opId) || known.has(p.opId) || p.deviceId === myDevice) continue;
@@ -301,7 +329,7 @@ async function mergeOps(ops: WireOp[], state: State) {
 }
 
 // ---------- Collègues à proximité ----------
-export type Peer = { endpointId: string; userId: number | null; name: string; connected: boolean; seenAt: number; dataAt?: number | null };
+export type Peer = { endpointId: string; userId: number | null; name: string; connected: boolean; seenAt: number; dataAt?: number | null; medium: Medium };
 
 // Fréquence de la vérification en arrière-plan (Paramètres) : 15, 30, 60 ou 120 minutes.
 const INTERVAL_KEY = "g37.syncInterval";
@@ -321,10 +349,15 @@ export function myDataAt(): number | null {
 }
 const peers = new Map<string, Peer>();
 export const getPeers = () => [...peers.values()];
-export const peerForUser = (userId: number) => getPeers().find((p) => p.userId === userId && p.connected) ?? null;
+// Liaison directe avec ce collègue : le Wi-Fi local (rapide, vidéo possible) passe avant le Bluetooth.
+export const peerForUser = (userId: number) => {
+  const list = getPeers().filter((p) => p.userId === userId && p.connected);
+  return list.find((p) => p.medium === "wifi") ?? list[0] ?? null;
+};
+export const peerByEndpoint = (endpointId: string) => peers.get(endpointId) ?? null;
 const userIdFromName = (name: string) => { const m = /^G37:(\d+):/.exec(name ?? ""); return m ? Number(m[1]) : null; };
 function touchPeer(endpointId: string, patch: Partial<Peer>) {
-  const prev = peers.get(endpointId) ?? { endpointId, userId: null, name: "", connected: false, seenAt: 0 };
+  const prev: Peer = peers.get(endpointId) ?? { endpointId, userId: null, name: "", connected: false, seenAt: 0, medium: endpointId.startsWith("lan:") ? "wifi" : "nearby" };
   const next = { ...prev, ...patch, seenAt: Date.now() };
   if (next.name && next.userId == null) next.userId = userIdFromName(next.name);
   peers.set(endpointId, next);
@@ -372,7 +405,8 @@ async function onMessage(endpointId: string, data: string) {
       await Nearby.sendFile({ endpointId, path: share.apk.path, kind: "apk", name: String(share.apk.code) });
     }
   } else if (msg.t === "call") {
-    callMessage.emit({ endpointId, userId: peers.get(endpointId)?.userId ?? null, msg });
+    const p = peers.get(endpointId);
+    callMessage.emit({ endpointId, userId: p?.userId ?? userIdFromName(endpointId.replace(/^lan:/, "")), medium: endpointId.startsWith("lan:") ? "wifi" : "nearby", msg });
   }
 }
 
@@ -437,6 +471,7 @@ export function processInbox(): Promise<void> {
 
 // ---------- Démarrage ----------
 let started = false;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let listenersReady = false;
 
 export async function requestP2PPermissions(): Promise<boolean> {
@@ -446,19 +481,18 @@ export async function requestP2PPermissions(): Promise<boolean> {
   return r.nearby;
 }
 
-export async function startP2P(me: { id: number; pending: boolean }): Promise<void> {
-  if (!nearbyAvailable()) return;
-  setStatus({ available: true });
-  const perm = await Nearby.checkNearbyPermissions().catch(() => ({ nearby: false, microphone: false }));
-  if (!perm.nearby) { setStatus({ needsPermission: true }); return; }
-  setStatus({ needsPermission: false });
-  if (me.pending || !getSecrets()?.p2pKey) return;
-  if (!listenersReady) {
+// Écoute des événements du téléphone : enregistrée une seule fois, même avant les clés
+// (un appel de proximité peut arriver dès l'ouverture de l'app depuis la notification).
+let listenersPromise: Promise<void> | null = null;
+export function ensureP2PListeners(): Promise<void> {
+  if (!nearbyAvailable()) return Promise.resolve();
+  if (listenersPromise) return listenersPromise;
+  listenersPromise = (async () => {
     listenersReady = true;
-    await Nearby.addListener("peerFound", (e) => touchPeer(e.endpointId, { name: e.name ?? "" }));
+    await Nearby.addListener("peerFound", (e) => touchPeer(e.endpointId, { name: e.name ?? "", ...(e.medium ? { medium: e.medium } : {}) }));
     await Nearby.addListener("peerLost", (e) => { peers.delete(e.endpointId); peersChanged.emit(getPeers()); });
     await Nearby.addListener("connected", async (e) => {
-      touchPeer(e.endpointId, { name: e.name ?? "", connected: true });
+      touchPeer(e.endpointId, { name: e.name ?? "", connected: true, ...(e.medium ? { medium: e.medium } : {}) });
       const cached = loadCachedState();
       const d = await getDevice();
       if (cached) await sendNearbyMessage(e.endpointId, { t: "hello", userId: cached.me.id, deviceId: d.deviceId, dataAt: myDataAt() }).catch(() => {});
@@ -469,9 +503,34 @@ export async function startP2P(me: { id: number; pending: boolean }): Promise<vo
     onOutboxChange(schedulePacket);
     onRelayChange(schedulePacket);
     setInterval(() => void writePacket(), 10 * 60000);
-  }
+    // Collègues déjà reliés (app rouverte alors que le service tournait).
+    const info = await Nearby.getInfo().catch(() => null);
+    for (const p of info?.peers ?? []) touchPeer(p.endpointId, { name: p.name, connected: p.connected, medium: p.medium ?? (p.endpointId.startsWith("lan:") ? "wifi" : "nearby") });
+  })();
+  return listenersPromise;
+}
+
+// Toujours joignable sans Internet (app fermée) : Paramètres.
+const REACH_KEY = "g37.reachable";
+export function reachableEnabled(): boolean {
+  try { return localStorage.getItem(REACH_KEY) !== "0"; } catch { return true; }
+}
+export async function setReachable(on: boolean) {
+  try { localStorage.setItem(REACH_KEY, on ? "1" : "0"); } catch { /* stockage indisponible */ }
+  if (await nativeV4Available()) await Nearby.setReachable({ enabled: on }).catch(() => {});
+}
+
+export async function startP2P(me: { id: number; pending: boolean }): Promise<void> {
+  if (!nearbyAvailable()) return;
+  setStatus({ available: true });
+  const perm = await Nearby.checkNearbyPermissions().catch(() => ({ nearby: false, microphone: false }));
+  if (!perm.nearby) { setStatus({ needsPermission: true }); return; }
+  setStatus({ needsPermission: false });
+  await ensureP2PListeners();
+  if (me.pending || !getSecrets()?.p2pKey) return;
   if (!started) {
     const d = await getDevice();
+    if (await nativeV4Available()) await Nearby.setReachable({ enabled: reachableEnabled() }).catch(() => {});
     await Nearby.start({ name: `G37:${me.id}:${d.deviceId.slice(2, 8)}` });
     await Nearby.setBackground({ enabled: true, intervalMinutes: syncIntervalMinutes() }).catch(() => {});
     started = true;

@@ -113,14 +113,43 @@ public final class G37Notify {
         Intent open = launchIntent(ctx);
         open.putExtra("g37_tab", val(data, "tab", ""));
         if (data.containsKey("peer")) open.putExtra("g37_peer", data.get("peer"));
+        // Messages privés : une seule notification par collègue, qui accumule les derniers messages (comme WhatsApp).
+        String peer = data.get("peer");
+        String groupKey = kind.equals("dm") && peer != null && !peer.isEmpty() ? "dm-" + peer : kind.equals("chat") ? "chat" : null;
+        NotificationCompat.Style style = new NotificationCompat.BigTextStyle().bigText(body);
+        String text = body;
+        if (groupKey != null) {
+            tag = groupKey;
+            SharedPreferences p = prefs(ctx);
+            String prev = p.getString("dmlines:" + groupKey, "");
+            String line = body;
+            String all = prev.isEmpty() ? line : prev + "\n" + line;
+            String[] lines = all.split("\n");
+            int from = Math.max(0, lines.length - 6);
+            StringBuilder kept = new StringBuilder();
+            NotificationCompat.InboxStyle inbox = new NotificationCompat.InboxStyle();
+            for (int i = from; i < lines.length; i++) {
+                if (kept.length() > 0) kept.append("\n");
+                kept.append(lines[i]);
+                inbox.addLine(lines[i]);
+            }
+            p.edit().putString("dmlines:" + groupKey, kept.toString()).apply();
+            if (lines.length > 1) {
+                inbox.setSummaryText(lines.length + " nouveaux messages");
+                style = inbox;
+                text = lines.length + " nouveaux messages";
+            }
+        }
         int code = tag.hashCode();
         PendingIntent pi = PendingIntent.getActivity(ctx, code, open, flags());
         NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, isMessage ? messageChannel(ctx) : alertChannel(ctx))
                 .setSmallIcon(R.drawable.ic_g37_notif)
                 .setColor(Color.rgb(245, 158, 11))
                 .setContentTitle(title)
-                .setContentText(body)
-                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setContentText(text)
+                .setStyle(style)
+                .setGroup(isMessage ? "g37-messages" : "g37-alerts")
+                .setOnlyAlertOnce(false)
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setCategory(isMessage ? NotificationCompat.CATEGORY_MESSAGE : NotificationCompat.CATEGORY_ALARM)
                 .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -134,27 +163,40 @@ public final class G37Notify {
         if (nm != null) nm.notify(tag, code, b.build());
     }
 
+    private static Intent callIntent(Context ctx, Map<String, String> data, String action) {
+        Intent i = launchIntent(ctx);
+        i.putExtra("g37_call_room", val(data, "room", "")).putExtra("g37_call_name", val(data, "name", "Collègue"))
+                .putExtra("g37_call_action", action).putExtra("g37_call_from", val(data, "from", ""))
+                .putExtra("g37_call_group", "1".equals(data.get("group")))
+                .putExtra("g37_call_via", val(data, "via", "internet"))
+                .putExtra("g37_call_endpoint", val(data, "endpoint", ""))
+                .putExtra("g37_call_mode", val(data, "mode", ""))
+                .putExtra("g37_call_video", "1".equals(data.get("video")));
+        return i;
+    }
+
     static void showIncomingCall(Context ctx, Map<String, String> data) {
         ensureChannels(ctx);
         String room = val(data, "room", "");
         String name = val(data, "name", "Collègue");
         boolean group = "1".equals(data.get("group"));
-        String title = group ? "Appel de groupe" : "Appel de " + name;
-        String body = group ? name + " t'invite à un appel de groupe" : "Appel Spinning R/F";
+        boolean video = "1".equals(data.get("video"));
+        String via = val(data, "via", "internet");
+        String kindLabel = video ? "Appel vidéo" : "Appel";
+        String title = group ? kindLabel + " de groupe" : kindLabel + " de " + name;
+        String where = via.equals("proche") ? " · sans Internet (Bluetooth)" : via.equals("wifi") ? " · sans Internet (Wi-Fi)" : "";
+        String body = (group ? name + " t'invite à un appel de groupe" : "Spinning R/F") + where;
+        prefs(ctx).edit().putString("ringRoom", room).putString("ringName", name).putBoolean("ringVideo", video)
+                .putLong("ringAt", System.currentTimeMillis()).apply();
 
-        Intent ring = launchIntent(ctx);
-        ring.putExtra("g37_call_room", room).putExtra("g37_call_name", name).putExtra("g37_call_action", "ring")
-                .putExtra("g37_call_from", val(data, "from", "")).putExtra("g37_call_group", group);
-        PendingIntent fullScreen = PendingIntent.getActivity(ctx, 3791, ring, flags());
-
-        Intent answer = launchIntent(ctx);
-        answer.putExtra("g37_call_room", room).putExtra("g37_call_name", name).putExtra("g37_call_action", "answer")
-                .putExtra("g37_call_from", val(data, "from", "")).putExtra("g37_call_group", group);
-        PendingIntent answerPi = PendingIntent.getActivity(ctx, 3792, answer, flags());
+        PendingIntent fullScreen = PendingIntent.getActivity(ctx, 3791, callIntent(ctx, data, "ring"), flags());
+        PendingIntent answerPi = PendingIntent.getActivity(ctx, 3792, callIntent(ctx, data, "answer"), flags());
 
         Intent decline = new Intent(ctx, G37CallActionReceiver.class);
         decline.setAction("com.atelierg37.CALL_DECLINE");
         decline.putExtra("room", room);
+        decline.putExtra("via", via);
+        decline.putExtra("endpoint", val(data, "endpoint", ""));
         PendingIntent declinePi = PendingIntent.getBroadcast(ctx, 3793, decline, flags());
 
         NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, callChannel(ctx))
@@ -185,6 +227,43 @@ public final class G37Notify {
     static void cancelCall(Context ctx) {
         NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) nm.cancel(CALL_NOTIFICATION_ID);
+        prefs(ctx).edit().remove("ringRoom").apply();
+    }
+
+    /** Appel qui sonnait (pas encore répondu) : sert à afficher « appel manqué » quand l'appelant raccroche. */
+    static String ringingRoom(Context ctx) {
+        SharedPreferences p = prefs(ctx);
+        if (System.currentTimeMillis() - p.getLong("ringAt", 0) > 120000) return null;
+        return p.getString("ringRoom", null);
+    }
+
+    static void showMissedCall(Context ctx, String name, boolean video) {
+        ensureChannels(ctx);
+        Intent open = launchIntent(ctx);
+        open.putExtra("g37_tab", "discussion");
+        open.putExtra("g37_segment", "calls");
+        PendingIntent pi = PendingIntent.getActivity(ctx, 3794, open, flags());
+        String when = java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date());
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, messageChannel(ctx))
+                .setSmallIcon(R.drawable.ic_g37_notif)
+                .setColor(Color.rgb(239, 68, 68))
+                .setContentTitle(video ? "Appel vidéo manqué" : "Appel manqué")
+                .setContentText(name + " · " + when)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory("missed_call")
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setAutoCancel(true)
+                .setContentIntent(pi);
+        NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+        if (nm != null) nm.notify("missed-" + System.currentTimeMillis(), 3795, b.build());
+    }
+
+    /** Ouverture de l'app : les messages regroupés par conversation repartent de zéro. */
+    static void clearMessageGroups(Context ctx) {
+        SharedPreferences p = prefs(ctx);
+        SharedPreferences.Editor e = p.edit();
+        for (String k : p.getAll().keySet()) if (k.startsWith("dmlines:")) e.remove(k);
+        e.apply();
     }
 
     private static String val(Map<String, String> data, String key, String fallback) {

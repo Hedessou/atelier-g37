@@ -8,33 +8,39 @@ import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
 import android.media.audiofx.AcousticEchoCanceler;
+import android.media.audiofx.AutomaticGainControl;
 import android.media.audiofx.NoiseSuppressor;
 import android.util.Log;
 
+import java.io.DataInputStream;
+import java.io.EOFException;
 import java.io.InputStream;
 import java.io.OutputStream;
 
-/** Appel de proximité : micro → flux Nearby, flux Nearby → haut-parleur (voix 8 kHz µ-law). */
+/**
+ * Appel Bluetooth / Wi-Fi direct (Google Nearby) : micro → flux, flux → écouteur.
+ * Version 4 : voix large bande 16 kHz (ADPCM), anti-écho, anti-bruit, gain automatique,
+ * petite mémoire tampon qui absorbe les à-coups du Bluetooth sans laisser le retard s'accumuler.
+ */
 final class AudioLink {
     private static final String TAG = "G37Audio";
-    private static final int RATE = 8000;
-    private static final int FRAME = 160; // 20 ms
+    private static final byte MAGIC = 0x47; // 'G'
+    private static final byte CODEC_ADPCM16 = 2;
+    private static final int PREFILL_FRAMES = 3;      // 60 ms avant de commencer à jouer
+    private static final int MAX_BACKLOG_FRAMES = 12; // au-delà de 240 ms de retard, on rattrape
 
-    private final AudioManager audioManager;
+    private final Context ctx;
     private volatile boolean running = true;
     private volatile boolean muted = false;
     private Thread captureThread;
     private Thread playThread;
     private OutputStream outStream;
     private InputStream inStream;
+    private volatile boolean speaker = false;
 
     AudioLink(Context context) {
-        audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
-        try {
-            audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-        } catch (Exception e) {
-            Log.w(TAG, "Mode communication indisponible", e);
-        }
+        ctx = context.getApplicationContext();
+        AudioRoute.apply(ctx, false);
     }
 
     void startCapture(final OutputStream out) {
@@ -44,26 +50,32 @@ final class AudioLink {
             AudioRecord rec = null;
             AcousticEchoCanceler aec = null;
             NoiseSuppressor ns = null;
+            AutomaticGainControl agc = null;
             try {
-                int min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-                rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, RATE,
-                        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, FRAME * 20));
-                if (AcousticEchoCanceler.isAvailable()) {
-                    aec = AcousticEchoCanceler.create(rec.getAudioSessionId());
-                    if (aec != null) aec.setEnabled(true);
-                }
-                if (NoiseSuppressor.isAvailable()) {
-                    ns = NoiseSuppressor.create(rec.getAudioSessionId());
-                    if (ns != null) ns.setEnabled(true);
-                }
+                int min = AudioRecord.getMinBufferSize(Adpcm.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+                rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, Adpcm.RATE,
+                        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, Adpcm.SAMPLES * 2 * 8));
+                int session = rec.getAudioSessionId();
+                if (AcousticEchoCanceler.isAvailable()) { aec = AcousticEchoCanceler.create(session); if (aec != null) aec.setEnabled(true); }
+                if (NoiseSuppressor.isAvailable()) { ns = NoiseSuppressor.create(session); if (ns != null) ns.setEnabled(true); }
+                if (AutomaticGainControl.isAvailable()) { agc = AutomaticGainControl.create(session); if (agc != null) agc.setEnabled(true); }
                 rec.startRecording();
-                short[] pcm = new short[FRAME];
-                byte[] enc = new byte[FRAME];
+                out.write(new byte[] { MAGIC, CODEC_ADPCM16 });
+                out.flush();
+                Adpcm.Encoder encoder = new Adpcm.Encoder();
+                short[] pcm = new short[Adpcm.SAMPLES];
+                short[] silence = new short[Adpcm.SAMPLES];
+                byte[] frame = new byte[Adpcm.FRAME_BYTES];
                 while (running) {
-                    int n = rec.read(pcm, 0, FRAME);
-                    if (n <= 0) continue;
-                    for (int i = 0; i < n; i++) enc[i] = muted ? (byte) 0xFF : MuLaw.encode(pcm[i]);
-                    out.write(enc, 0, n);
+                    int got = 0;
+                    while (got < Adpcm.SAMPLES && running) {
+                        int n = rec.read(pcm, got, Adpcm.SAMPLES - got);
+                        if (n <= 0) break;
+                        got += n;
+                    }
+                    if (got < Adpcm.SAMPLES) continue;
+                    encoder.encode(muted ? silence : pcm, frame);
+                    out.write(frame);
                     out.flush();
                 }
             } catch (SecurityException e) {
@@ -74,46 +86,69 @@ final class AudioLink {
                 try { if (rec != null) { rec.stop(); rec.release(); } } catch (Exception ignored) { }
                 try { if (aec != null) aec.release(); } catch (Exception ignored) { }
                 try { if (ns != null) ns.release(); } catch (Exception ignored) { }
+                try { if (agc != null) agc.release(); } catch (Exception ignored) { }
                 try { out.close(); } catch (Exception ignored) { }
             }
         }, "g37-audio-capture");
         captureThread.start();
     }
 
-    void play(final InputStream in) {
+    void play(final InputStream raw) {
         if (playThread != null) return;
-        inStream = in;
+        inStream = raw;
         playThread = new Thread(() -> {
             AudioTrack track = null;
             try {
-                int min = AudioTrack.getMinBufferSize(RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
+                DataInputStream in = new DataInputStream(raw);
+                int b0 = in.readUnsignedByte();
+                int b1 = in.readUnsignedByte();
+                if (b0 != (MAGIC & 0xFF) || b1 != CODEC_ADPCM16) {
+                    Log.w(TAG, "Flux d'une ancienne version : son ignoré");
+                    return;
+                }
+                int min = AudioTrack.getMinBufferSize(Adpcm.RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
                 track = new AudioTrack(
                         new AudioAttributes.Builder()
                                 .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                                 .build(),
                         new AudioFormat.Builder()
-                                .setSampleRate(RATE)
+                                .setSampleRate(Adpcm.RATE)
                                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
                                 .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                                 .build(),
-                        Math.max(min, FRAME * 20),
+                        Math.max(min, Adpcm.SAMPLES * 2 * 6),
                         AudioTrack.MODE_STREAM,
                         AudioManager.AUDIO_SESSION_ID_GENERATE);
-                track.play();
-                byte[] buf = new byte[FRAME * 2];
-                short[] pcm = new short[FRAME * 2];
+                byte[] frame = new byte[Adpcm.FRAME_BYTES];
+                short[] pcm = new short[Adpcm.SAMPLES];
+                int buffered = 0;
+                boolean playing = false;
                 while (running) {
-                    int n = in.read(buf);
-                    if (n < 0) break;
-                    for (int i = 0; i < n; i++) pcm[i] = MuLaw.decode(buf[i]);
-                    track.write(pcm, 0, n);
+                    // Retard trop grand (Bluetooth qui a « bouchonné ») : on saute des trames pour revenir au direct.
+                    try {
+                        int backlog = raw.available() / Adpcm.FRAME_BYTES;
+                        if (backlog > MAX_BACKLOG_FRAMES) {
+                            for (int i = 0; i < backlog - PREFILL_FRAMES; i++) in.readFully(frame);
+                        }
+                    } catch (Exception ignored) {
+                        // available() non pris en charge : on continue normalement
+                    }
+                    in.readFully(frame);
+                    Adpcm.decode(frame, pcm);
+                    track.write(pcm, 0, Adpcm.SAMPLES);
+                    if (!playing && ++buffered >= PREFILL_FRAMES) {
+                        track.play();
+                        playing = true;
+                    }
                 }
+            } catch (EOFException e) {
+                Log.i(TAG, "Fin du flux");
             } catch (Exception e) {
                 Log.w(TAG, "Lecture arrêtée", e);
             } finally {
                 try { if (track != null) { track.stop(); track.release(); } } catch (Exception ignored) { }
-                try { in.close(); } catch (Exception ignored) { }
+                try { raw.close(); } catch (Exception ignored) { }
             }
         }, "g37-audio-play");
         playThread.start();
@@ -123,25 +158,21 @@ final class AudioLink {
         muted = value;
     }
 
-    @SuppressWarnings("deprecation")
     void setSpeaker(boolean on) {
-        try {
-            audioManager.setSpeakerphoneOn(on);
-        } catch (Exception e) {
-            Log.w(TAG, "Haut-parleur", e);
-        }
+        speaker = on;
+        AudioRoute.apply(ctx, on);
     }
 
-    @SuppressWarnings("deprecation")
+    boolean isSpeaker() {
+        return speaker;
+    }
+
     void stop() {
         running = false;
         try { if (captureThread != null) captureThread.interrupt(); } catch (Exception ignored) { }
         try { if (playThread != null) playThread.interrupt(); } catch (Exception ignored) { }
         try { if (outStream != null) outStream.close(); } catch (Exception ignored) { }
         try { if (inStream != null) inStream.close(); } catch (Exception ignored) { }
-        try {
-            audioManager.setSpeakerphoneOn(false);
-            audioManager.setMode(AudioManager.MODE_NORMAL);
-        } catch (Exception ignored) { }
+        AudioRoute.reset(ctx);
     }
 }
