@@ -1,4 +1,5 @@
 import { sql } from "./db.ts";
+import { g37 } from "../shared/g37.ts";
 
 // Équipe de quart en poste maintenant, d'après le planning (heure du Bénin, UTC+1, sans heure d'été).
 // Matin 07h–15h, après-midi 15h–23h, nuit 23h–07h (la nuit appartient au jour où elle commence).
@@ -20,8 +21,10 @@ export async function teamOnDuty(now = new Date()): Promise<Duty | null> {
 
 // Répartit des destinataires : d'abord l'équipe en poste et les postes sans quart (superviseurs, Boss…),
 // ensuite les techniciens des équipes qui ne sont pas en poste.
-export function splitByDuty<T extends { team: string | null }>(users: T[], duty: Duty | null): { first: T[]; later: T[] } {
+// Le General shift (09h–17h, lundi–samedi) est prévenu d'abord pendant ses heures, ensuite seulement en renfort.
+export function splitByDuty<T extends { team: string | null }>(users: T[], duty: Duty | null, now = new Date()): { first: T[]; later: T[] } {
   if (!duty) return { first: users, later: [] };
-  const offDuty = (u: T) => !!u.team && ["A", "B", "C"].includes(u.team) && u.team !== duty.team;
+  const general = g37.generalOnDuty(now);
+  const offDuty = (u: T) => !!u.team && ((["A", "B", "C"].includes(u.team) && u.team !== duty.team) || (u.team === "G" && !general));
   return { first: users.filter((u) => !offDuty(u)), later: users.filter(offDuty) };
 }

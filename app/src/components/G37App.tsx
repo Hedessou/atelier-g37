@@ -28,7 +28,8 @@ import { saveBlob } from "../lib/files";
 import { isOnline } from "../lib/net";
 import { extractManualChunks, uploadManualChunks } from "../lib/manualPdf";
 import { pushSupported } from "../helpers/pushClient";
-import { HomeView, type HomeTodo } from "./HomeView";
+import { HomeView, type HomeTodo, type HomeAction } from "./HomeView";
+import { ICONS } from "./HomeLive";
 import { ChecklistEditor, MaintChecklistDialog } from "./Checklist";
 import { IndicatorsView } from "./IndicatorsView";
 import { MachineHistory } from "./MachineHistory";
@@ -568,70 +569,6 @@ export const G37App = ({ className }: { className?: string }) => {
   const whenColor = (n: number) => (n < 0 ? "#fca5a5" : n === 0 ? "#fcd34d" : "var(--g-dim)");
   const goto = (k: string) => { setTab(k); setOpenMachine(null); setQ(""); window.scrollTo(0, 0); };
 
-  // Accueil des postes de production (Prod superviseur / Prod manager) : l'essentiel en un coup d'œil.
-  const quickIco = (d: string) => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={d} /></svg>
-  );
-  const renderProdHome = () => (
-    <div className={styles.stack}>
-      <div className={styles.statusCard}>
-        <div className={styles.statusTop}>
-          <strong>{t("État des métiers", "Machine status")}</strong>
-          <span className={styles.statusTotal}>{machines.length}</span>
-        </div>
-        <div className={styles.statusBar} aria-hidden="true">
-          {running > 0 && <span style={{ flex: running, background: "var(--g-ok)" }} />}
-          {stoppedCount > 0 && <span style={{ flex: stoppedCount, background: "var(--g-crit)" }} />}
-          {maintCount > 0 && <span style={{ flex: maintCount, background: "var(--g-warn)" }} />}
-        </div>
-        <div className={styles.statusLegend}>
-          <div><span className={styles.statusNum} style={{ color: "var(--g-ok)" }}>{running}</span>{t("En service", "Running")}</div>
-          <div><span className={styles.statusNum} style={{ color: "var(--g-crit)" }}>{stoppedCount}</span>{t("À l'arrêt", "Stopped")}</div>
-          <div><span className={styles.statusNum} style={{ color: "var(--g-warn)" }}>{maintCount}</span>{t("Maintenance", "Maintenance")}</div>
-        </div>
-      </div>
-      <div className={styles.tiles}>
-        <button className={`${styles.tile} ${openFaults.length ? styles.tileCrit : styles.tileOk}`} onClick={() => goto("pannes")}>
-          <span className={styles.tileNum}>{openFaults.length}</span><span>{t("Pannes ouvertes", "Open faults")}</span>
-        </button>
-        <button className={`${styles.tile} ${dmUnreadTotal ? styles.tileWarn : styles.tileOk}`} onClick={() => { setMsgSegment("chats"); goto("discussion"); }}>
-          <span className={styles.tileNum}>{dmUnreadTotal}</span><span>{t("Messages non lus", "Unread messages")}</span>
-        </button>
-      </div>
-      <div className={styles.quick} style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
-        <button className={`${styles.quickBtn} ${styles.quickPrimary}`} onClick={() => goto("pannes")}>{quickIco("M12 3l10 18H2L12 3zM12 10v5M12 18h.01")}{t("Signaler", "Report")}</button>
-        <button className={styles.quickBtn} onClick={() => goto("calcul")}>{quickIco("M5 3h14v18H5zM8 7h8M8 12h2M12 12h2M16 12v5M8 16h2M12 16h2")}{t("Calcul", "Calculator")}</button>
-        <button className={styles.quickBtn} onClick={() => goto("gears")}>{quickIco("M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1")}Gears</button>
-        <button className={styles.quickBtn} onClick={() => { setMsgSegment("calls"); goto("discussion"); }}>{quickIco("M5 4h4l2 5-3 2a11 11 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2")}{t("Appeler", "Call")}</button>
-        <button className={styles.quickBtn} onClick={() => { setMsgSegment("calls"); goto("discussion"); }}>{quickIco("M3 6h13v12H3zM16 10l5-3v10l-5-3")}{t("Vidéo", "Video")}</button>
-        <button className={styles.quickBtn} onClick={() => { setMsgSegment("chats"); goto("discussion"); }}>{quickIco("M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z")}Message</button>
-      </div>
-      {stopped.length > 0 && (
-        <div className={styles.card}>
-          <div className={styles.head}><h2 className={styles.h2}>{t("Métiers à l'arrêt", "Stopped machines")}</h2><p className={styles.sub}>{stopped.length}</p></div>
-          {stopped.slice(0, 12).map((m) => (
-            <div key={m.no} className={`${styles.item} ${styles.row} ${styles.between}`}>
-              <strong>M/C {String(m.no).padStart(2, "0")}</strong>
-              <Pill tone={g37.M_STATUS[m.status]?.tone}>{statusName(m.status, g37.M_STATUS[m.status]?.n ?? m.status)}{m.stopReason ? ` · ${stopReasonName(m.stopReason)}` : ""}</Pill>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className={styles.card}>
-        <div className={styles.head}><h2 className={styles.h2}>{t("Dernières pannes", "Latest faults")}</h2><p className={styles.sub}>{openFaults.length} {t("ouverte(s)", "open")}</p></div>
-        {openFaults.length ? openFaults.slice(0, 6).map((f) => (
-          <div key={f.id} className={styles.item}>
-            <strong>M/C {f.machineNo} — {f.issue}</strong>
-            <div className={styles.meta}>{f.reportedBy ?? ""}{f.technician ? ` · ${t("technicien", "technician")} ${f.technician}` : ""}</div>
-          </div>
-        )) : <div className={styles.empty}>{t("Aucune panne ouverte.", "No open fault.")}</div>}
-      </div>
-      {nearCount > 0 && (
-        <div className={styles.note}>{t(`${nearCount} collègue(s) relié(s) en direct (Bluetooth / Wi-Fi) : messages, pannes et appels passent même sans Internet.`, `${nearCount} colleague(s) linked directly (Bluetooth / Wi-Fi): messages, faults and calls work even offline.`)}</div>
-      )}
-    </div>
-  );
-
   // ---- Accueil : une seule liste « à faire maintenant », triée par urgence ----
   const isBoss = me.jobRole === "forman" || me.jobRole === "manager";
   const homeTodo: HomeTodo[] = (() => {
@@ -640,7 +577,7 @@ export const G37App = ({ className }: { className?: string }) => {
     openFaults.forEach((f) => {
       const ms = f.stoppedAt ? Date.now() - new Date(f.stoppedAt).getTime() : Date.now() - new Date(f.openedAt).getTime();
       out.push({
-        key: `f${f.id}`, group: "fault", kind: t("Panne", "Fault"), tone: "crit", mc: `M/C ${pad2(f.machineNo)}`, what: f.issue,
+        key: `f${f.id}`, group: "fault", kind: t("Panne", "Fault"), tone: "crit", mc: `M/C ${pad2(f.machineNo)}`, what: f.issue, n: 1, no: f.machineNo,
         when: f.stoppedAt ? `${t("Arrêtée depuis", "Stopped for")} ${fmtDur(f.stoppedAt, new Date()) ?? t("peu", "a moment")}` : `${t("Signalée il y a", "Reported")} ${fmtDur(f.openedAt, new Date()) ?? t("peu", "a moment")}`,
         rank: -1e9 + (f.stoppedAt ? -ms : 0),
         action: { label: t("Voir", "View"), run: () => goto("pannes") },
@@ -649,7 +586,7 @@ export const G37App = ({ className }: { className?: string }) => {
     maintDue.forEach((m) => {
       const n = daysTo(dayISO(m.nextMaintenance!));
       out.push({
-        key: `m${m.no}`, group: "maint", kind: t("Maintenance clg", "Cleaning maintenance"), tone: n < 0 ? "crit" : "warn", mc: `M/C ${pad2(m.no)}`,
+        key: `m${m.no}`, group: "maint", kind: t("Maintenance clg", "Cleaning maintenance"), tone: n < 0 ? "crit" : "warn", mc: `M/C ${pad2(m.no)}`, n: 1, no: m.no,
         what: t("Visite périodique", "Periodic visit"), when: dueText(n), rank: n * 10,
         action: can("maint") ? { label: t("Fait", "Done"), run: () => setChecklistFor(m.no) } : undefined,
       });
@@ -670,6 +607,7 @@ export const G37App = ({ className }: { className?: string }) => {
           key: `c${c.kind}-${c.key}-${from}-${to}`, group: "cycle",
           kind: c.kind === "grease" ? t("Graissage", "Greasing") : c.kind === "lub" ? t("Lubrification", "Lubrication") : "Schedule works",
           tone: c.days < 0 ? "crit" : "warn", mc: from === to ? `M/C ${pad2(from)}` : `M/C ${pad2(from)}–${pad2(to)}`, what: c.what, when: dueText(c.days), rank: c.days * 10 + 1,
+          cat: c.kind, n: to - from + 1, no: from,
           action: allowed ? { label: t("Fait", "Done"), run: () => {
             if (window.confirm(t(`${c.what} sur ${from === to ? `la M/C ${from}` : `les M/C ${from} à ${to}`} : fait aujourd'hui ?`, `${c.what} on M/C ${from}${from === to ? "" : `–${to}`}: done today?`))) save({ action: "cycle", kind: c.kind, pointKey: c.key, from, to });
           } } : undefined,
@@ -689,12 +627,28 @@ export const G37App = ({ className }: { className?: string }) => {
     return out.sort((x, y) => x.rank - y.rank);
   })();
 
+  const isProd = me.jobRole === "prodsup" || me.jobRole === "prodman";
+  const openChats = () => { setMsgSegment("chats"); goto("discussion"); };
+  const openCalls = () => { setMsgSegment("calls"); goto("discussion"); };
+  const homeActions: HomeAction[] = isProd
+    ? [
+        { key: "report", label: t("Signaler", "Report"), icon: ICONS.fault, run: () => goto("pannes"), primary: true },
+        { key: "calc", label: t("Calcul", "Calculator"), icon: ICONS.calc, run: () => goto("calcul") },
+        { key: "gears", label: "Gears", icon: ICONS.gear, run: () => goto("gears") },
+        { key: "call", label: t("Appeler", "Call"), icon: ICONS.phone, run: openCalls },
+        { key: "video", label: t("Vidéo", "Video"), icon: ICONS.video, run: openCalls },
+        { key: "msg", label: "Message", icon: ICONS.chat, run: openChats },
+      ]
+    : [
+        { key: "fault", label: t("Panne", "Fault"), icon: ICONS.fault, run: () => goto("pannes"), primary: true },
+        { key: "grease", label: t("Graissage", "Greasing"), icon: ICONS.drop, run: () => goto("graissage") },
+        { key: "store", label: t("Magasin", "Store"), icon: ICONS.box, run: () => goto("magasin") },
+        { key: "call", label: t("Appeler", "Call"), icon: ICONS.phone, run: openCalls },
+      ];
   const renderAccueil = () => (
     <HomeView state={state} lang={lang} todo={homeTodo} boss={isBoss} canBossView={me.role === "admin" || me.jobRole === "superviseur"}
       onOpenMachine={(no) => { setTab("machines"); setOpenMachine(no); setQ(""); window.scrollTo(0, 0); }}
-      goto={goto}
-      onCall={() => { setMsgSegment("calls"); goto("discussion"); }}
-      onSeeAllTodo={() => goto(openFaults.length ? "pannes" : "maintenance")} />
+      goto={goto} prod={isProd} unread={dmUnreadTotal} actions={homeActions} onMessages={openChats} />
   );
 
   /* ---------- Machines ---------- */
@@ -1478,10 +1432,12 @@ export const G37App = ({ className }: { className?: string }) => {
     if (h < 7) { const dd = new Date(); dd.setDate(dd.getDate() - 1); dutyDay = dd.toISOString().slice(0, 10); }
     const dutyTeam = g37.TEAMS.find((t) => shiftOf(dutyDay, t) === code);
     const shiftLabel = g37.SHIFT_TYPES.find((s) => s.k === code);
+    const generalNow = g37.generalOnDuty(now);
+    const generalTeam = state.users.filter((u) => u.team === "G" && !u.pending);
 
     return (
       <div className={styles.stack}>
-        <div className={styles.head}><h1 className={styles.title}>{t("Running techniciens", "Technicians on duty")}</h1><p className={styles.sub}>{t("Planning des quarts · équipes A, B et C", "Shift schedule · teams A, B and C")}</p></div>
+        <div className={styles.head}><h1 className={styles.title}>{t("Running techniciens", "Technicians on duty")}</h1><p className={styles.sub}>{t("Planning des quarts · équipes A, B, C et General", "Shift schedule · teams A, B, C and General")}</p></div>
         <div className={styles.card}>
           <span className={styles.eyebrow}>{t("En ce moment", "Right now")}</span>
           <h2 className={styles.h2} style={{ margin: "4px 0" }}>{dutyTeam ? `${t("Équipe", "Team")} ${dutyTeam} — ${shiftName(code, shiftLabel?.n ?? "")}` : t("Aucune équipe planifiée", "No team scheduled")}</h2>
@@ -1495,10 +1451,28 @@ export const G37App = ({ className }: { className?: string }) => {
               {state.users.filter((u) => u.team === dutyTeam).map((u) => u.displayName).join(", ") || t("Assigne tes techniciens à une équipe depuis l'onglet Accès.", "Assign your technicians to a team from the Access tab.")}
             </div>
           )}
+          {generalNow && (
+            <div className={styles.meta} style={{ marginTop: 6 }}>
+              {t("General shift aussi en poste (09h–17h)", "General shift also on duty (9am–5pm)")}{generalTeam.length ? ` : ${generalTeam.map((u) => u.displayName).join(", ")}` : ""}
+            </div>
+          )}
+        </div>
+        <div className={styles.card}>
+          <div className={`${styles.row} ${styles.between}`}>
+            <h2 className={styles.h2} style={{ margin: 0 }}>General shift</h2>
+            <Pill tone={generalNow ? "ok" : undefined}>{generalNow ? t("En poste maintenant", "On duty now") : t("Hors poste", "Off duty")}</Pill>
+          </div>
+          <div className={styles.meta} style={{ marginTop: 6 }}>
+            {t("Tous les jours de 09h à 17h, du lundi au samedi (repos le dimanche). Pas de rotation : ce sont toujours les mêmes heures.", "Every day from 9am to 5pm, Monday to Saturday (off on Sunday). No rotation: always the same hours.")}
+          </div>
+          <div className={styles.meta} style={{ marginTop: 6 }}>
+            {generalTeam.length ? generalTeam.map((u) => u.displayName).join(", ") : t("Personne pour l'instant. Choisis « General (09h–17h) » pour une personne dans l'onglet Accès.", "Nobody yet. Pick \u201cGeneral (9am–5pm)\u201d for a person in the Access tab.")}
+          </div>
         </div>
         <div className={styles.card}>
           <div className={styles.row}>
             {g37.SHIFT_TYPES.map((s) => <Pill key={s.k}>{shiftName(s.k, s.n)} · {s.h}</Pill>)}
+            <Pill tone="ok">General · {g37.GENERAL.h}</Pill>
           </div>
         </div>
         <div className={styles.card}>
@@ -1509,7 +1483,7 @@ export const G37App = ({ className }: { className?: string }) => {
           </div>
           <div className={styles.tableWrap}>
             <table className={styles.table}>
-              <thead><tr><th>{t("Jour", "Day")}</th>{g37.TEAMS.map((tm) => <th key={tm}>{t("Équipe", "Team")} {tm}</th>)}</tr></thead>
+              <thead><tr><th>{t("Jour", "Day")}</th>{g37.TEAMS.map((tm) => <th key={tm}>{t("Équipe", "Team")} {tm}</th>)}<th>General</th></tr></thead>
               <tbody>
                 {Array.from({ length: nDays }, (_, i) => {
                   const day = `${shiftMonth}-${String(i + 1).padStart(2, "0")}`;
@@ -1533,6 +1507,7 @@ export const G37App = ({ className }: { className?: string }) => {
                           </td>
                         );
                       })}
+                      <td>{new Date(`${day}T12:00:00Z`).getUTCDay() === 0 ? <span className={styles.meta}>{t("Repos", "Off")}</span> : <Pill tone="ok">09h–17h</Pill>}</td>
                     </tr>
                   );
                 })}
@@ -1909,7 +1884,7 @@ export const G37App = ({ className }: { className?: string }) => {
                 <Picker
                   value={u.team ?? "__none"}
                   onChange={(v) => save({ action: "grade", userId: u.id, jobRole: u.jobRole, team: v === "__none" ? null : v, pending: u.pending })}
-                  options={([["__none", t("Sans quart", "No shift")]] as Array<[string, string]>).concat(g37.TEAMS.map((tm) => [tm, `${t("Équipe", "Team")} ${tm}`] as [string, string]))}
+                  options={([["__none", t("Sans quart", "No shift")]] as Array<[string, string]>).concat(g37.TEAMS.map((tm) => [tm, `${t("Équipe", "Team")} ${tm}`] as [string, string])).concat([["G", t("General (09h–17h)", "General (9am–5pm)")]])}
                 />
                 {u.role !== "admin" && (
                   <>
@@ -2011,9 +1986,11 @@ export const G37App = ({ className }: { className?: string }) => {
   const allowedTabs = g37.visibleTabs(me);
   const restricted = allowedTabs !== null;
   // Postes à accès limité : les onglets dans l'ordre de leur poste (ex. Prod superviseur : Accueil, Calcul, Pannes, Gears, Messages).
-  const visibleTabs = restricted
+  // Accès : propriétaire seul. Messages et appels : pas pour le Boss.
+  const visibleTabs = (restricted
     ? allowedTabs.map((k) => TABS.find(([key]) => key === k)).filter((x): x is [string, string, string] => !!x)
-    : TABS.filter(([key]) => key === "ia" ? !me.pending : true);
+    : TABS.filter(([key]) => key === "ia" ? !me.pending : key === "acces" ? me.id === g37.OWNER_USER_ID : true))
+    .filter(([key]) => key !== "discussion" || g37.canChat(me));
   const special = ["parametres", "profil", "guide", "indicateurs"];
   const activeTab = special.includes(tab) ? tab : visibleTabs.some(([key]) => key === tab) ? tab : (visibleTabs[0]?.[0] ?? "accueil");
 
@@ -2062,7 +2039,7 @@ export const G37App = ({ className }: { className?: string }) => {
       );
       case "magasin": return renderMagasin();
       case "acces": return renderAcces();
-      default: return restricted && (me.jobRole === "prodsup" || me.jobRole === "prodman") ? renderProdHome() : renderAccueil();
+      default: return renderAccueil();
     }
   };
 

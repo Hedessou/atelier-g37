@@ -11,6 +11,7 @@ import { broadcastTo } from "../lib/supa.ts";
 import { callTopic } from "../lib/p2pKeys.ts";
 import { loadMe } from "./mutate.ts";
 import { notifyUsers } from "../lib/notify.ts";
+import { g37 } from "../shared/g37.ts";
 
 export const MAX_PARTICIPANTS = 25;
 const RING_MS = 50_000;
@@ -56,8 +57,9 @@ async function joinedIds(roomId: string): Promise<number[]> {
 }
 
 async function inviteUsers(roomId: string, from: { id: number; displayName: string }, ids: number[], group: boolean, video = false) {
-  const valid = ids.length ? await sql`SELECT id FROM users WHERE id = ANY(${ids}::int[]) AND id <> ${from.id}` : [];
-  const list = valid.map((r: any) => r.id as number);
+  const valid = ids.length ? await sql`SELECT id, job_role FROM users WHERE id = ANY(${ids}::int[]) AND id <> ${from.id}` : [];
+  // Les postes sans appels (Boss) ne sont jamais invités.
+  const list = valid.filter((r: any) => g37.canChat({ id: r.id, jobRole: r.job_role })).map((r: any) => r.id as number);
   if (!list.length) return [];
   for (const id of list) {
     await sql`INSERT INTO call_room_members (room_id, user_id, invited_at) VALUES (${roomId}, ${id}, now())
@@ -110,6 +112,7 @@ export async function handleCallRoom(request: Request): Promise<Response> {
   let user;
   try { user = await me(request); } catch { return json({ error: "Authentification requise" }, 401); }
   if (user.pending) return json({ error: "Ton compte doit être validé par l'admin avant d'appeler." }, 403);
+  if (!g37.canChat(user)) return json({ error: "Les appels ne sont pas disponibles pour ton poste." }, 403);
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return json({ error: "Requête invalide" }, 400);
   const { action, id } = parsed.data;

@@ -68,6 +68,12 @@ function PhotoSlot({ label, value, busy, onPick, onClear, lang }: {
   );
 }
 
+/** « Lubrication — Spindle oil change » → ["Lubrication", "Spindle oil change"] ; sans zone → [null, texte]. */
+export function splitZone(text: string): [string | null, string] {
+  const i = text.indexOf(" — ");
+  return i > 0 && i < 60 ? [text.slice(0, i).trim(), text.slice(i + 3).trim()] : [null, text];
+}
+
 export function MaintChecklistDialog({ open, onOpenChange, machineNo, state, lang, canEditTemplate, save }: {
   open: boolean; onOpenChange: (o: boolean) => void; machineNo: number | null; state: State; lang: "fr" | "en";
   canEditTemplate: boolean; save: (input: InputType) => void;
@@ -141,11 +147,27 @@ export function MaintChecklistDialog({ open, onOpenChange, machineNo, state, lan
         </div>
 
         <div className={styles.steps}>
-          {items.map((it, k) => (
-            <div key={k} className={`${styles.step} ${it.done ? styles.stepDone : ""}`}>
+          {items.map((it, k) => {
+            // « Zone — point » : un titre par zone (fiche Benin Textiles), le point seul sur la ligne.
+            const [zone, label] = splitZone(it.text);
+            const prevZone = k > 0 ? splitZone(items[k - 1].text)[0] : null;
+            const zoneItems = zone ? items.map((x, i) => [x, i] as const).filter(([x]) => splitZone(x.text)[0] === zone) : [];
+            const zoneDone = zoneItems.filter(([x]) => x.done).length;
+            return (
+            <React.Fragment key={k}>
+            {zone && zone !== prevZone && (
+              <div className={styles.zone}>
+                <span className={styles.zoneName}>{zone}</span>
+                <span className={styles.zoneCount}>{zoneDone}/{zoneItems.length}</span>
+                <button type="button" className={styles.zoneAll} onClick={() => { const all = zoneDone < zoneItems.length; zoneItems.forEach(([, i]) => update(i, { done: all })); }}>
+                  {zoneDone < zoneItems.length ? t("Tout cocher", "Tick all") : t("Tout décocher", "Untick all")}
+                </button>
+              </div>
+            )}
+            <div className={`${styles.step} ${it.done ? styles.stepDone : ""}`}>
               <label className={styles.stepMain}>
                 <input type="checkbox" className={styles.box} checked={it.done} onChange={(e) => update(k, { done: e.target.checked })} />
-                <span className={styles.stepText}>{it.text}{it.extra && <span className={styles.badge}>{t("ajoutée", "added")}</span>}</span>
+                <span className={styles.stepText}>{label}{it.extra && <span className={styles.badge}>{t("ajoutée", "added")}</span>}</span>
               </label>
               <button type="button" className={styles.noteBtn} onClick={() => update(k, { showNote: !it.showNote })} aria-label={t("Ajouter une remarque", "Add a remark")}>
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z" /></svg>
@@ -154,7 +176,9 @@ export function MaintChecklistDialog({ open, onOpenChange, machineNo, state, lan
                 <Input className={styles.noteInput} value={it.note} maxLength={300} placeholder={t("Remarque (pièce usée, réglage…)", "Remark (worn part, setting…)")} onChange={(e) => update(k, { note: e.target.value })} />
               )}
             </div>
-          ))}
+            </React.Fragment>
+            );
+          })}
           {!items.length && <div className={styles.empty}>{t("Le modèle est vide : ajoute tes étapes ci-dessous.", "The template is empty: add your steps below.")}</div>}
         </div>
 

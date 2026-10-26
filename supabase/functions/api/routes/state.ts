@@ -135,7 +135,7 @@ export async function handleState(request: Request): Promise<Response> {
         items: Array.isArray(c.items) ? c.items : [], notes: c.notes ?? null,
         photoBeforeUrl: c.photo_before ? photoUrls.get(c.photo_before) ?? null : null, photoAfterUrl: c.photo_after ? photoUrls.get(c.photo_after) ?? null : null,
       })),
-      duty: duty ? { team: duty.team, code: duty.code } : null,
+      duty: duty ? { team: duty.team, code: duty.code, general: g37.generalOnDuty() } : (g37.generalOnDuty() ? { team: "", code: "g", general: true } : null),
       works: sees("travaux") || sees("machines") ? works.map((w: Row) => ({ ...w, authorName: w.authorName ?? null, doneByName: w.doneByName ?? null })) : [],
       failures: !sees("pannes") && !sees("machines") ? [] : failures.map((f: Row) => ({
         ...f, machineNo: noFromId(f.machineId), notes: f.notes ?? null, technician: f.technician ?? null, reportedBy: f.reportedBy ?? null,

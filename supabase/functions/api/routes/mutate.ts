@@ -46,7 +46,7 @@ export const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("chat"), message: z.string().max(2000), replyToId: z.string().min(1).max(100).nullable().optional(), mentionUserIds: z.array(z.number().int()).max(50).optional(), file: z.object({ key: z.string().min(1).max(300), name: z.string().min(1).max(200), type: z.string().max(120), size: z.number().int().min(0) }).nullable().optional(), clientId: z.string().min(6).max(40).optional() }),
   z.object({ action: z.literal("chatDelete"), id: z.string().min(1) }),
   z.object({ action: z.literal("passwordResetAdmin"), userId: z.number().int() }),
-  z.object({ action: z.literal("grade"), userId: z.number().int(), jobRole: z.string().min(1).max(40), team: z.string().max(2).nullable(), pending: z.boolean() }),
+  z.object({ action: z.literal("grade"), userId: z.number().int(), jobRole: z.string().min(1).max(40), team: z.enum(["A", "B", "C", "G"]).nullable(), pending: z.boolean() }),
   z.object({ action: z.literal("deleteUser"), userId: z.number().int() }),
   z.object({ action: z.literal("profile"), jobRole: z.string().min(1).max(40), code: z.string().max(40).nullable() }),
   z.object({ action: z.literal("dm"), id: z.string().regex(/^[A-Za-z0-9_-]{8,60}$/), to: z.number().int(), envelope: z.record(z.any()) }),
@@ -463,7 +463,7 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       return ok("Message supprimé.");
     }
     case "passwordResetAdmin": {
-      if (!need("roles")) return deny("Seul l'admin peut réinitialiser un mot de passe.");
+      if (!need("roles") || me.id !== g37.OWNER_USER_ID) return deny("Seul l'admin peut réinitialiser un mot de passe.");
       if (input.userId === me.id) return deny("Pour ton propre compte, utilise la procédure de récupération.");
       const target = await db.selectFrom("users").select(["id", "displayName", "role"]).where("id", "=", input.userId).executeTakeFirst();
       if (!target) return deny("Compte introuvable.", 404);
@@ -475,13 +475,13 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       return ok(`Compte de ${target.displayName} réinitialisé. Mot de passe temporaire : ${temporaryPassword}`);
     }
     case "grade": {
-      if (!need("roles")) return deny("Seul l'admin change les grades.");
+      if (!need("roles") || me.id !== g37.OWNER_USER_ID) return deny("Seul l'admin change les grades.");
       if (!g37.ROLES[input.jobRole]) return deny("Poste inconnu.", 400);
       await db.updateTable("users").set({ jobRole: input.jobRole, team: input.team, pending: input.pending, updatedAt: now }).where("id", "=", input.userId).execute();
       return ok();
     }
     case "deleteUser": {
-      if (!need("roles")) return deny("Seul l'admin supprime un compte.");
+      if (!need("roles") || me.id !== g37.OWNER_USER_ID) return deny("Seul l'admin supprime un compte.");
       if (input.userId === me.id) return deny("Tu ne peux pas supprimer ton propre compte.", 400);
       const target = await db.selectFrom("users").select(["id", "role", "displayName"]).where("id", "=", input.userId).executeTakeFirst();
       if (!target) return ok();
@@ -493,11 +493,13 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
     }
     case "dm": {
       if (me.pending) return deny("Ton compte doit être validé par l'admin avant d'écrire en privé.");
+      if (!g37.canChat(me)) return deny("Les messages ne sont pas disponibles pour ton poste.");
       if (input.to === me.id) return deny("Destinataire invalide.", 400);
       // Photos et notes vocales courtes incluses dans le message chiffré (envoi possible sans Internet).
       if (JSON.stringify(input.envelope).length > 200000) return deny("Message trop long.", 400);
-      const target = await db.selectFrom("users").select("id").where("id", "=", input.to).executeTakeFirst();
+      const target = await db.selectFrom("users").select(["id", "jobRole"]).where("id", "=", input.to).executeTakeFirst();
       if (!target) return deny("Collègue introuvable.", 404);
+      if (!g37.canChat(target)) return deny("Ce collègue ne reçoit pas de messages.", 403);
       const inserted = await sql`INSERT INTO dm_messages (id, from_user, to_user, envelope, created_at)
         VALUES (${input.id}, ${me.id}, ${input.to}, ${sql.json(input.envelope)}, ${now}) ON CONFLICT (id) DO NOTHING RETURNING id`;
       if (inserted.length) await broadcastTo(await callTopic(input.to), "dm", { from: me.id, id: input.id });

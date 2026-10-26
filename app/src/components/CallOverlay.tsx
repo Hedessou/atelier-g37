@@ -7,6 +7,7 @@ import {
 import { useG37 } from "../helpers/useG37";
 import { PeoplePicker } from "./PeoplePicker";
 import styles from "./CallOverlay.module.css";
+import { g37 } from "../helpers/g37";
 
 const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
 
@@ -191,7 +192,7 @@ export const CallOverlay = () => {
       <PeoplePicker
         open={adding}
         onOpenChange={setAdding}
-        people={(state?.users ?? []).filter((u) => u.id !== state?.me.id)}
+        people={(state?.users ?? []).filter((u) => u.id !== state?.me.id && g37.canChat(u))}
         exclude={s.participants.filter((p) => p.status !== "left" && p.status !== "declined").map((p) => p.userId)}
         max={Math.max(1, MAX_PARTICIPANTS - 1 - others.length)}
         title="Ajouter à l'appel"

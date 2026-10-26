@@ -11,6 +11,7 @@ import { onNewDm, refreshDms } from "../lib/dms";
 import { checkRinging, declineFromNotification, handleLaunchCall, onInternetSignal, setCallIdentity } from "../lib/calls";
 import { Nearby, isWifiEndpoint, nativeSoundsAvailable, type LaunchData, type RingingCall } from "../lib/nearby";
 import { applySoundPrefs, playAlert } from "../lib/sounds";
+import { g37 } from "../helpers/g37";
 
 // Fait tourner en fond : synchro sans Internet, messages privés, appels entrants.
 export const P2PBridge = () => {
@@ -23,8 +24,8 @@ export const P2PBridge = () => {
   const [topic, setTopic] = useState<string | null>(() => getSecrets()?.callTopic ?? null);
 
   useEffect(() => {
-    setCallIdentity(me ? { id: me.id, displayName: me.displayName } : null);
-  }, [me?.id, me?.displayName]);
+    setCallIdentity(me ? { id: me.id, displayName: me.displayName, noCalls: !g37.canChat(me) } : null);
+  }, [me?.id, me?.displayName, me?.jobRole]);
 
   // Avec Internet : clés, enregistrement du téléphone, actions des collègues à porter, messages privés.
   useEffect(() => {

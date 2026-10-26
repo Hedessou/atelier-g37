@@ -141,7 +141,8 @@ export type OutputType = {
   stockOuts?: G37StockOut[];
   checklistSteps?: G37ChecklistStep[];
   checklists?: G37Checklist[];
-  duty?: { team: string; code: string } | null;
+  // team vide = aucune équipe A/B/C planifiée ; general = le General shift (09h–17h) est en poste.
+  duty?: { team: string; code: string; general?: boolean } | null;
 };
 
 export type G37Device = { deviceId: string; userId: number; signJwk: JsonWebKey; encJwk: JsonWebKey };

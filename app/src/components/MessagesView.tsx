@@ -94,7 +94,8 @@ export const MessagesView = ({ state, lang, save, renderGroup, segment, onSegmen
     return () => { alive = false; clearInterval(id); off(); };
   }, [segment, online]);
 
-  const users = useMemo(() => state.users.filter((u) => u.id !== me.id), [state.users, me.id]);
+  // Le Boss n'a ni messages ni appels : il n'apparaît pas dans la liste des collègues.
+  const users = useMemo(() => state.users.filter((u) => u.id !== me.id && g37.canChat(u)), [state.users, me.id]);
   const userById = useMemo(() => new Map(state.users.map((u) => [u.id, u])), [state.users]);
   const linked = peers.filter((p) => p.connected && p.userId != null);
   const wifiIds = new Set(linked.filter((p) => p.medium === "wifi").map((p) => p.userId as number));

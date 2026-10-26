@@ -66,10 +66,10 @@ const ROLES: Record<string, { n: string; p: Perm[]; code?: boolean; tabs?: strin
   genmaint: { n: "Responsable maintenance générale", p: ["maint", "works", "faultReport", "faults", "stock", "forum"] },
   greaser: { n: "Opérateur graissage", p: ["grease", "works", "faultReport", "faults", "stock", "forum"] },
   manager: { n: "Manager", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "forum", "eff", "shifts", "specs"], code: true },
-  forman: { n: "Boss", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "forum", "eff", "shifts", "specs"], code: true },
-  prodsup: { n: "Prod superviseur", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion"] },
+  forman: { n: "Boss", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "eff", "shifts", "specs"], code: true },
+  prodsup: { n: "Prod superviseur", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion", "quarts"] },
   // Mêmes accès que Prod superviseur.
-  prodman: { n: "Prod manager", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion"] },
+  prodman: { n: "Prod manager", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion", "quarts"] },
   helper: { n: "Helper", p: ["faultReport"] },
 };
 
@@ -81,6 +81,24 @@ const SHIFT_TYPES = [
   { k: "n", n: "Nuit", h: "23h — 07h" },
   { k: "r", n: "Repos", h: "—" },
 ];
+
+// General shift : personnel de jour, hors rotation A / B / C (09h–17h, du lundi au samedi).
+const GENERAL = { k: "G", n: "General shift", h: "09h — 17h", from: 9, to: 17, days: [1, 2, 3, 4, 5, 6] };
+// Compte propriétaire de l'atelier : seul à voir le menu Accès.
+const OWNER_USER_ID = 1;
+
+/** Le General shift est-il en poste maintenant ? (heure du Bénin, UTC+1) */
+// Postes sans messages ni appels (26/10/2026 : le Boss n'a accès ni aux messages ni aux appels).
+const NO_CHAT_ROLES = ["forman"];
+function canChat(user: { id?: number; jobRole?: string | null } | null | undefined): boolean {
+  if (!user) return false;
+  return user.id === OWNER_USER_ID || !NO_CHAT_ROLES.includes(user.jobRole ?? "");
+}
+function generalOnDuty(now: Date = new Date()): boolean {
+  const local = new Date(now.getTime() + 3600000);
+  const h = local.getUTCHours();
+  return GENERAL.days.includes(local.getUTCDay()) && h >= GENERAL.from && h < GENERAL.to;
+}
 
 const M_STATUS: Record<string, { n: string; tone: "ok" | "warn" | "crit" }> = {
   service: { n: "En service", tone: "ok" },
@@ -158,7 +176,7 @@ function visibleTabs(
 
 export const g37 = {
   GROUPS, SPEC_LABELS, GREASE_POINTS, LUB_BOXES, CYCLE_OVERRIDES,
-  ROLES, TEAMS, SHIFT_TYPES, M_STATUS, STOP_REASONS, COMMON_FAULTS,
+  ROLES, TEAMS, SHIFT_TYPES, GENERAL, OWNER_USER_ID, generalOnDuty, NO_CHAT_ROLES, canChat, M_STATUS, STOP_REASONS, COMMON_FAULTS,
   GEAR_RANGE, GEARS_PER_MACHINE, STOCK_ALERT, ACCESS_CODE, DRAFT_K,
   groupOf, cycleDays, inGearRange, draftOf, can, visibleTabs,
 };

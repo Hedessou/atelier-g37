@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import { db } from "../lib/db.ts";
 import { getServerUserSession } from "../lib/session.ts";
 import { json } from "../lib/http.ts";
+import { g37 } from "../shared/g37.ts";
 
 type Col = { header: string; key: string; width?: number };
 const num = (v: unknown) => (v == null || v === "" ? null : Number(v));
@@ -22,7 +23,7 @@ function addSheet(wb: any, name: string, cols: Col[], rows: Record<string, unkno
 export async function handleExport(request: Request): Promise<Response> {
   let user;
   try { ({ user } = await getServerUserSession(request)); } catch { return json({ error: "Authentification requise" }, 401); }
-  if (user.role !== "admin") return json({ error: "Seul l'admin peut exporter la sauvegarde." }, 403);
+  if (user.role !== "admin" || user.id !== g37.OWNER_USER_ID) return json({ error: "Seul le propriétaire peut exporter la sauvegarde." }, 403);
   try {
     const [machines, failures, maintenance, greasing, cyclePoints, works, stock, movements, gears, shifts, efficiency, specs, users, chat] = await Promise.all([
       db.selectFrom("machines").selectAll().orderBy("machineNo", "asc").execute(),

@@ -1,5 +1,5 @@
 {
   "nativeVersionCode": 5,
   "minNativeVersionCode": 4,
-  "notes": "Version 1.1 : nouvel accueil, rôle Boss, alertes d'abord à l'équipe en poste, magasin intelligent (sorties par métier, coût des pannes, « à commander » selon la consommation réelle), check-list de maintenance modifiable avec photos avant / après, indicateurs du mois (PDF et Excel), fiche complète de chaque métier, accusés de lecture des messages. APK 5 : liaison Bluetooth plus fiable et réseau Wi-Fi créé par un téléphone pour relier les autres sans Internet."
+  "notes": "Version 1.1 (suite) : nouvel accueil vivant en verre givré pour l'atelier et la production (métiers en marche / arrêt / maintenance, pannes non résolues, maintenances, graissages et schedule works en retard, planning des quarts pour la production), General shift 09h–17h, menu Accès réservé au propriétaire, check-list de maintenance de la fiche Benin Textiles (34 points en 6 zones). APK 5 : liaison Bluetooth plus fiable et réseau Wi-Fi créé par un téléphone pour relier les autres sans Internet."
 }

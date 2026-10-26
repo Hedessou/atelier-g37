@@ -33,14 +33,28 @@ const ROLES: Record<string, { n: string; p: Perm[]; code?: boolean; tabs?: strin
   genmaint: { n: "Responsable maintenance générale", p: ["maint", "works", "faultReport", "faults", "stock", "forum"] },
   greaser: { n: "Opérateur graissage", p: ["grease", "works", "faultReport", "faults", "stock", "forum"] },
   manager: { n: "Manager", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "forum", "eff", "shifts", "specs"], code: true },
-  forman: { n: "Boss", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "forum", "eff", "shifts", "specs"], code: true },
-  prodsup: { n: "Prod superviseur", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion"] },
-  prodman: { n: "Prod manager", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion"] },
+  forman: { n: "Boss", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "eff", "shifts", "specs"], code: true },
+  prodsup: { n: "Prod superviseur", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion", "quarts"] },
+  prodman: { n: "Prod manager", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion", "quarts"] },
   helper: { n: "Helper", p: ["faultReport"] },
 };
 
 const TEAMS = ["A", "B", "C"] as const;
 const SHIFT_TYPES = [{ k: "m", n: "Matin", h: "07h — 15h" }, { k: "s", n: "Après-midi", h: "15h — 23h" }, { k: "n", n: "Nuit", h: "23h — 07h" }, { k: "r", n: "Repos", h: "—" }];
+// General shift : personnel de jour, hors rotation A / B / C (09h–17h, du lundi au samedi).
+const GENERAL = { k: "G", n: "General shift", h: "09h — 17h", from: 9, to: 17, days: [1, 2, 3, 4, 5, 6] };
+const OWNER_USER_ID = 1;
+// Postes sans messages ni appels (26/10/2026 : le Boss n'a accès ni aux messages ni aux appels).
+const NO_CHAT_ROLES = ["forman"];
+function canChat(user: { id?: number; jobRole?: string | null } | null | undefined): boolean {
+  if (!user) return false;
+  return user.id === OWNER_USER_ID || !NO_CHAT_ROLES.includes(user.jobRole ?? "");
+}
+function generalOnDuty(now: Date = new Date()): boolean {
+  const local = new Date(now.getTime() + 3600000);
+  const h = local.getUTCHours();
+  return GENERAL.days.includes(local.getUTCDay()) && h >= GENERAL.from && h < GENERAL.to;
+}
 const M_STATUS: Record<string, { n: string; tone: "ok" | "warn" | "crit" }> = { service: { n: "En service", tone: "ok" }, arret: { n: "À l'arrêt", tone: "crit" }, maintenance: { n: "En maintenance", tone: "warn" } };
 const STOP_REASONS = ["Manque de mèche", "Manque de commande", "Changement d'article", "Manque de personnel", "Nettoyage", "Coupure électrique", "Arrêt programmé", "Pièce en attente", "Panne en cours", "Autre"];
 const COMMON_FAULTS = ["S26", "S27", "B120", "B121", "B91", "B124", "S123", "S124", "B707/706", "B709/710", "B712", "Side cute", "Belt broken", "Servodisc belt broken", "Main belt broken", "Bearing hot", "Drum separator jamming", "Jockey pulley missing", "Brake missing", "Link pulleys jamming", "Doffer height settings", "Ring rail height settings", "Doffer 161 height settings", "Doffer sensor height settings"];
@@ -76,4 +90,4 @@ function visibleTabs(user: { role?: string | null; jobRole?: string | null } | n
   return ROLES[user.jobRole ?? "helper"]?.tabs ?? null;
 }
 
-export const g37 = { GROUPS, SPEC_LABELS, GREASE_POINTS, LUB_BOXES, CYCLE_OVERRIDES, ROLES, TEAMS, SHIFT_TYPES, M_STATUS, STOP_REASONS, COMMON_FAULTS, GEAR_RANGE, GEARS_PER_MACHINE, STOCK_ALERT, ACCESS_CODE, DRAFT_K, groupOf, cycleDays, inGearRange, draftOf, can, visibleTabs };
+export const g37 = { GROUPS, SPEC_LABELS, GREASE_POINTS, LUB_BOXES, CYCLE_OVERRIDES, ROLES, TEAMS, SHIFT_TYPES, GENERAL, OWNER_USER_ID, generalOnDuty, NO_CHAT_ROLES, canChat, M_STATUS, STOP_REASONS, COMMON_FAULTS, GEAR_RANGE, GEARS_PER_MACHINE, STOCK_ALERT, ACCESS_CODE, DRAFT_K, groupOf, cycleDays, inGearRange, draftOf, can, visibleTabs };

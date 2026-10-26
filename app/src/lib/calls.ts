@@ -34,7 +34,7 @@ export type RoomInfo = {
   members: Array<{ userId: number; name: string; status: "in" | "ringing" | "declined" | "left" | "missed"; joinedAt: string | null }>;
 };
 
-type Me = { id: number; displayName: string };
+type Me = { id: number; displayName: string; noCalls?: boolean };
 let me: Me | null = null;
 export function setCallIdentity(m: Me | null) { me = m; }
 
@@ -727,7 +727,7 @@ export async function switchCamera(): Promise<void> {
 
 // ---- Appel reçu ----
 function showIncoming(roomId: string, from: number, name: string, group: boolean, via: Via = "internet", video = false) {
-  if (busy()) return;
+  if (busy() || me?.noCalls) return;   // poste sans appels (Boss)
   incomingCall = true;
   set(baseCall({ phase: "incoming", roomId, group, via, inviterId: from, inviterName: name, video, speaker: group || video,
     participants: [{ userId: from, name, status: "connected" }] }));
