@@ -75,6 +75,14 @@ async function inviteUsers(roomId: string, from: { id: number; displayName: stri
   return list;
 }
 
+// Collègues qui ne peuvent pas être réveillés app fermée (aucun jeton de notification enregistré).
+async function withoutPush(ids: number[]): Promise<Array<{ id: number; name: string }>> {
+  if (!ids.length) return [];
+  const rows = await sql`SELECT u.id, u.display_name FROM users u WHERE u.id = ANY(${ids}::int[])
+    AND NOT EXISTS (SELECT 1 FROM push_tokens p WHERE p.user_id = u.id)`;
+  return rows.map((r: any) => ({ id: r.id as number, name: r.display_name as string }));
+}
+
 async function endIfEmpty(roomId: string, from: { id: number; displayName: string }) {
   const still = await joinedIds(roomId);
   if (still.length) return false;
@@ -116,8 +124,8 @@ export async function handleCallRoom(request: Request): Promise<Response> {
       ON CONFLICT (id) DO NOTHING RETURNING id`;
     if (!inserted.length) return json({ error: "Appel déjà créé" }, 409);
     await sql`INSERT INTO call_room_members (room_id, user_id, invited_at, joined_at) VALUES (${id}, ${user.id}, now(), now())`;
-    await inviteUsers(id, user, invite, group, video);
-    return json({ room: await roomView(id) });
+    const invited = await inviteUsers(id, user, invite, group, video);
+    return json({ room: await roomView(id), noPush: await withoutPush(invited) });
   }
 
   const [room] = await sql`SELECT id, is_group, ended_at, created_at FROM call_rooms WHERE id = ${id}`;
@@ -154,8 +162,8 @@ export async function handleCallRoom(request: Request): Promise<Response> {
   const [{ n }] = await sql`SELECT count(*)::int AS n FROM call_room_members WHERE room_id = ${id} AND (declined_at IS NULL) AND (left_at IS NULL)`;
   if (n + invite.length > MAX_PARTICIPANTS) return json({ error: `${MAX_PARTICIPANTS} personnes au maximum.` }, 400);
   await sql`UPDATE call_rooms SET is_group = true WHERE id = ${id}`;
-  await inviteUsers(id, user, invite, true, parsed.data.video ?? false);
-  return json({ room: await roomView(id) });
+  const invited = await inviteUsers(id, user, invite, true, parsed.data.video ?? false);
+  return json({ room: await roomView(id), noPush: await withoutPush(invited) });
 }
 
 export async function handleCallRooms(request: Request): Promise<Response> {

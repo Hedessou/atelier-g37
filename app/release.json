@@ -1,5 +1,5 @@
 {
-  "nativeVersionCode": 4,
+  "nativeVersionCode": 5,
   "minNativeVersionCode": 4,
-  "notes": "Version 4 : appels voix et vidéo sans Internet (Wi-Fi local, point d'accès, Bluetooth), connexion automatique entre téléphones, messagerie façon WhatsApp (photos, notes vocales, réponses), appels et messages reçus app fermée, écran Prod superviseur, guide de connexion"
+  "notes": "Version 1.1 : nouvel accueil, rôle Boss, alertes d'abord à l'équipe en poste, magasin intelligent (sorties par métier, coût des pannes, « à commander » selon la consommation réelle), check-list de maintenance modifiable avec photos avant / après, indicateurs du mois (PDF et Excel), fiche complète de chaque métier, accusés de lecture des messages. APK 5 : liaison Bluetooth plus fiable et réseau Wi-Fi créé par un téléphone pour relier les autres sans Internet."
 }

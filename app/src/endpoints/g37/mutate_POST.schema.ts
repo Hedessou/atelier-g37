@@ -38,6 +38,7 @@ export const schema = z.discriminatedUnion("action", [
     id: z.string().min(1),
     fix: z.string().max(2000).nullable(),
     restartedAt: z.coerce.date().nullable(),
+    parts: z.array(z.object({ itemId: z.string().min(1).max(80), quantity: z.number().positive().max(100000) })).max(10).optional(),
   }),
   z.object({
     action: z.literal("cycle"),
@@ -71,7 +72,30 @@ export const schema = z.discriminatedUnion("action", [
     machineNo: z.number().int().min(1).max(28),
     next: z.coerce.date().nullable(),
   }),
-  z.object({ action: z.literal("maintDone"), machineNo: z.number().int().min(1).max(28) }),
+  z.object({
+    action: z.literal("maintDone"),
+    machineNo: z.number().int().min(1).max(28),
+    checklist: z.object({
+      items: z.array(z.object({ text: z.string().trim().min(1).max(200), done: z.boolean(), note: z.string().max(300).nullable().optional(), extra: z.boolean().optional() })).max(80),
+      photoBefore: z.string().max(300).nullable().optional(),
+      photoAfter: z.string().max(300).nullable().optional(),
+      notes: z.string().max(1000).nullable().optional(),
+      saveExtras: z.boolean().optional(),
+    }).optional(),
+  }),
+  z.object({
+    action: z.literal("stockOut"),
+    itemId: z.string().min(1).max(80),
+    quantity: z.number().positive().max(100000),
+    machineNo: z.number().int().min(1).max(28).nullable(),
+    failureId: z.string().max(80).nullable().optional(),
+    note: z.string().max(300).nullable().optional(),
+  }),
+  z.object({ action: z.literal("stockIn"), itemId: z.string().min(1).max(80), quantity: z.number().positive().max(1000000), note: z.string().max(300).nullable().optional() }),
+  z.object({ action: z.literal("checklistStepAdd"), text: z.string().trim().min(1).max(200) }),
+  z.object({ action: z.literal("checklistStepEdit"), id: z.string().min(1).max(80), text: z.string().trim().min(1).max(200) }),
+  z.object({ action: z.literal("checklistStepDelete"), id: z.string().min(1).max(80) }),
+  z.object({ action: z.literal("checklistStepMove"), id: z.string().min(1).max(80), dir: z.enum(["up", "down"]) }),
   z.object({ action: z.literal("stockQty"), id: z.string().min(1), quantity: z.number().min(0), baseQuantity: z.number().min(0).nullable().optional() }),
   z.object({
     action: z.literal("stockAdd"),
@@ -80,6 +104,8 @@ export const schema = z.discriminatedUnion("action", [
     unit: z.string().trim().min(1).max(20),
     quantity: z.number().min(0).max(1000000),
     minimumQuantity: z.number().min(0).max(1000000),
+    unitPrice: z.number().min(0).max(1e9).nullable().optional(),
+    leadDays: z.number().int().min(1).max(365).optional(),
   }),
   z.object({
     action: z.literal("stockEdit"),
@@ -88,6 +114,8 @@ export const schema = z.discriminatedUnion("action", [
     category: z.string().trim().min(1).max(60),
     unit: z.string().trim().min(1).max(20),
     minimumQuantity: z.number().min(0).max(1000000),
+    unitPrice: z.number().min(0).max(1e9).nullable().optional(),
+    leadDays: z.number().int().min(1).max(365).optional(),
   }),
   z.object({ action: z.literal("stockDelete"), id: z.string().min(1) }),
   z.object({

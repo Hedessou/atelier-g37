@@ -1,3 +1,4 @@
+import { escalateOpenFaults } from "../lib/notify.ts";
 // deno-lint-ignore-file no-explicit-any
 import { z } from "zod";
 import { nanoid } from "nanoid";
@@ -130,11 +131,20 @@ export async function handleVersion(): Promise<Response> {
   return json({ ...info, manifest, manifestSig: await serverSign(manifest) });
 }
 
+// Toutes les 10 min (tâche planifiée) : relance des pannes non réglées vers les autres équipes.
+export async function handleCronEscalate(request: Request): Promise<Response> {
+  const key = request.headers.get("x-cron-key") ?? "";
+  const row = await db.selectFrom("appConfig").select("value").where("key", "=", "cron.key").executeTakeFirst();
+  if (!row || !key || key !== row.value) return json({ error: "forbidden" }, 403);
+  return json({ ok: true, sent: await escalateOpenFaults() });
+}
+
 export async function handleCron(request: Request): Promise<Response> {
   const key = request.headers.get("x-cron-key") ?? "";
   const row = await db.selectFrom("appConfig").select("value").where("key", "=", "cron.key").executeTakeFirst();
   if (!row || !key || key !== row.value) return json({ error: "forbidden" }, 403);
   await loadAndRunDueAlerts();
+  await escalateOpenFaults().catch((e) => console.error("Relance des pannes:", e));
   await sql`DELETE FROM sync_ops WHERE applied_at < now() - interval '90 days'`;
   await sql`DELETE FROM app_sessions WHERE expires_at < now()`;
   return json({ ok: true });

@@ -181,7 +181,7 @@ const machineIdOf = (no: number) => "M-" + String(no).padStart(2, "0");
 const dayOf = (d: Date) => new Date(d.getTime() + 3600000).toISOString().slice(0, 10);
 
 export function applyLocal(state: State, op: Pick<Op, "opId" | "clientAt" | "input">, actor?: Me): State {
-  const s: State = { ...state };
+  let s: State = { ...state };
   const input = op.input;
   const now = new Date(op.clientAt);
   const me: Me = actor ?? s.me;
@@ -220,6 +220,12 @@ export function applyLocal(state: State, op: Pick<Op, "opId" | "clientAt" | "inp
     case "faultFix":
       if (!need("faults")) return state;
       s.failures = s.failures.map((f) => f.id === input.id ? { ...f, status: "resolue", resolvedAt: now, restartedAt: input.restartedAt, fixedBy: me.displayName, technician: me.displayName, notes: input.fix ?? f.notes } : f);
+      if (input.parts?.length && need("stock")) {
+        const fault = s.failures.find((f) => f.id === input.id);
+        for (const [k, p] of input.parts.entries()) {
+          s = applyLocal(s, { opId: `${op.opId}-p${k}`, clientAt: op.clientAt, input: { action: "stockOut", itemId: p.itemId, quantity: p.quantity, machineNo: fault?.machineNo ?? null, failureId: input.id, note: fault ? `Réparation : ${fault.issue}` : null } }, me);
+        }
+      }
       return s;
     case "cycle": {
       if (!(input.kind === "sched" ? need("works") : need("grease"))) return state;
@@ -250,8 +256,49 @@ export function applyLocal(state: State, op: Pick<Op, "opId" | "clientAt" | "inp
     case "maintDone": {
       if (!need("maint")) return state;
       const next = new Date(now.getTime() + 30 * 86400000);
+      const cl = input.checklist;
+      const doneCount = cl ? cl.items.filter((i) => i.done).length : 0;
       s.machines = s.machines.map((m) => m.no === input.machineNo ? { ...m, lastMaintenance: now, nextMaintenance: next } : m);
-      s.maintenance = [{ id: localId, machineNo: input.machineNo, maintenanceType: "Visite périodique", performedAt: now, nextDue: next, technician: me.displayName, notes: null }, ...s.maintenance];
+      s.maintenance = [{ id: localId, machineNo: input.machineNo, maintenanceType: "Visite périodique", performedAt: now, nextDue: next, technician: me.displayName,
+        notes: cl ? `Check-list : ${doneCount}/${cl.items.length} étape(s) faite(s)` : null }, ...s.maintenance];
+      if (cl) {
+        s.checklists = [{ id: localId, machineNo: input.machineNo, maintenanceId: localId, doneAt: now, authorName: me.displayName,
+          items: cl.items, notes: cl.notes ?? null, photoBeforeUrl: null, photoAfterUrl: null }, ...(s.checklists ?? [])];
+      }
+      return s;
+    }
+    case "stockOut": {
+      if (!need("stock")) return state;
+      const item = s.stock.find((it) => it.id === input.itemId);
+      s.stock = s.stock.map((it) => it.id === input.itemId ? { ...it, quantity: String(Math.max(0, Number(it.quantity) - input.quantity)), used30: (it.used30 ?? 0) + input.quantity } : it);
+      s.stockOuts = [{ id: localId, itemId: input.itemId, itemName: item?.name ?? "", unit: item?.unit ?? "", quantity: input.quantity,
+        unitCost: item?.unitPrice != null ? Number(item.unitPrice) : null, machineNo: input.machineNo, failureId: input.failureId ?? null,
+        authorName: me.displayName, reason: input.note ?? null, createdAt: now }, ...(s.stockOuts ?? [])];
+      return s;
+    }
+    case "stockIn":
+      if (!need("stock")) return state;
+      s.stock = s.stock.map((it) => it.id === input.itemId ? { ...it, quantity: String(Number(it.quantity) + input.quantity) } : it);
+      return s;
+    case "checklistStepAdd":
+      if (!need("specs")) return state;
+      s.checklistSteps = [...(s.checklistSteps ?? []), { id: localId, position: 99999, text: input.text }];
+      return s;
+    case "checklistStepEdit":
+      if (!need("specs")) return state;
+      s.checklistSteps = (s.checklistSteps ?? []).map((x) => x.id === input.id ? { ...x, text: input.text } : x);
+      return s;
+    case "checklistStepDelete":
+      if (!need("specs")) return state;
+      s.checklistSteps = (s.checklistSteps ?? []).filter((x) => x.id !== input.id);
+      return s;
+    case "checklistStepMove": {
+      if (!need("specs")) return state;
+      const list = [...(s.checklistSteps ?? [])];
+      const i = list.findIndex((x) => x.id === input.id);
+      const j = input.dir === "up" ? i - 1 : i + 1;
+      if (i >= 0 && j >= 0 && j < list.length) [list[i], list[j]] = [list[j], list[i]];
+      s.checklistSteps = list;
       return s;
     }
     case "stockQty":

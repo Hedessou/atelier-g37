@@ -95,11 +95,34 @@ export async function handleRelay(request: Request): Promise<Response> {
 export async function handleDms(request: Request): Promise<Response> {
   let user;
   try { user = await me(request); } catch { return json({ error: "Authentification requise" }, 401); }
-  const rows = await sql`SELECT id, from_user, to_user, envelope, created_at FROM dm_messages
+  // Mes messages sont arrivés sur mon téléphone : l'expéditeur voit deux traits.
+  const delivered = await sql`UPDATE dm_messages SET delivered_at = now() WHERE to_user = ${user.id} AND delivered_at IS NULL RETURNING from_user`;
+  await notifySenders(delivered.map((r: any) => Number(r.from_user)), user.id);
+  const rows = await sql`SELECT id, from_user, to_user, envelope, created_at, delivered_at, read_at FROM dm_messages
     WHERE from_user = ${user.id} OR to_user = ${user.id} ORDER BY created_at DESC LIMIT 600`;
+  const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
   return json({
-    dms: rows.reverse().map((r: any) => ({ id: r.id, from: r.from_user, to: r.to_user, envelope: r.envelope, createdAt: new Date(r.created_at).toISOString() })),
+    dms: rows.reverse().map((r: any) => ({
+      id: r.id, from: r.from_user, to: r.to_user, envelope: r.envelope, createdAt: new Date(r.created_at).toISOString(),
+      deliveredAt: iso(r.delivered_at), readAt: iso(r.read_at),
+    })),
   });
+}
+
+async function notifySenders(senderIds: number[], reader: number) {
+  for (const id of [...new Set(senderIds)]) await broadcastTo(await callTopic(id), "dm_status", { by: reader });
+}
+
+// Conversation ouverte : les messages reçus de ce collègue jusqu'à « until » sont lus (deux traits bleus chez lui).
+export async function handleDmRead(request: Request): Promise<Response> {
+  let user;
+  try { user = await me(request); } catch { return json({ error: "Authentification requise" }, 401); }
+  const parsed = z.object({ peer: z.number().int(), until: z.string().datetime() }).safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return json({ error: "Requête invalide" }, 400);
+  const rows = await sql`UPDATE dm_messages SET read_at = now(), delivered_at = COALESCE(delivered_at, now())
+    WHERE to_user = ${user.id} AND from_user = ${parsed.data.peer} AND created_at <= ${parsed.data.until}::timestamptz AND read_at IS NULL RETURNING id`;
+  if (rows.length) await notifySenders([parsed.data.peer], user.id);
+  return json({ ok: true, read: rows.length });
 }
 
 export async function handleCallSignal(request: Request): Promise<Response> {

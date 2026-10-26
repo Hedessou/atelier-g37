@@ -6,3 +6,19 @@
 .steps { margin: 4px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 0.88rem; line-height: 1.45; }
 .steps li::marker { color: var(--g-accent); font-weight: 700; }
 .steps button { margin-top: 6px; }
+.quick { gap: 12px; }
+.quickHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.badge { min-width: 40px; height: 40px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-family-monospace, monospace); font-size: 1.15rem; background: #0f1b2d; color: var(--g-dim); border: 1px solid var(--g-line); flex: none; }
+.badgeOk { color: var(--g-ok); border-color: rgba(52, 211, 153, 0.4); background: rgba(52, 211, 153, 0.1); }
+.net { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 14px; background: #0f1b2d; border: 1px solid var(--g-line); align-items: flex-start; }
+.netTitle { font-size: 0.86rem; font-weight: 700; }
+.cred { display: flex; flex-direction: column; gap: 2px; width: 100%; }
+.credLabel { font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--g-dim); font-weight: 700; }
+.credValue { font-family: var(--font-family-monospace, monospace); font-size: 1.15rem; color: var(--g-ink); overflow-wrap: anywhere; user-select: all; }
+.joinForm { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.joinForm > button { width: 100%; }
+.input { height: 44px; border-radius: 12px; border: 1px solid var(--g-line); background: var(--g-bg); color: var(--g-ink); font: inherit; font-size: 0.95rem; padding: 0 12px; width: 100%; box-sizing: border-box; }
+.input:focus { outline: none; border-color: var(--g-accent); }
+.errs { display: flex; flex-direction: column; gap: 6px; padding-top: 4px; border-top: 1px solid var(--g-line); }
+.err { font-size: 0.8rem; color: #c7d3e2; line-height: 1.4; }
+.errTime { font-family: var(--font-family-monospace, monospace); color: var(--g-dim); margin-right: 8px; }

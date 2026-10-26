@@ -531,6 +531,7 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
         r.put("nearby", allGranted(neededAliases(false)));
         r.put("microphone", getPermissionState("microphone") == PermissionState.GRANTED);
         r.put("camera", getPermissionState("camera") == PermissionState.GRANTED);
+        r.put("location", getPermissionState("location") == PermissionState.GRANTED);
         return r;
     }
 
@@ -542,6 +543,13 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
     @PluginMethod
     public void requestNearbyPermissions(PluginCall call) {
         String[] aliases = neededAliases(call.getBoolean("microphone", false), call.getBoolean("camera", false));
+        // v5 : réseau Wi-Fi créé / rejoint par l'app → la position peut être exigée aussi sur Android 13+.
+        if (Boolean.TRUE.equals(call.getBoolean("location", false)) && Build.VERSION.SDK_INT >= 33) {
+            String[] more = new String[aliases.length + 1];
+            System.arraycopy(aliases, 0, more, 0, aliases.length);
+            more[aliases.length] = "location";
+            aliases = more;
+        }
         if (aliases.length == 0 || allGranted(aliases)) {
             call.resolve(permissionResult(call));
             return;
@@ -563,6 +571,72 @@ public class G37NearbyPlugin extends Plugin implements NearbyEngine.Listener {
         engine.setForeground(true);
         engine.start(name);
         call.resolve(toJS(engine.info()));
+    }
+
+    /** v5 : relance immédiate de la recherche et des liaisons (bouton « Relancer la recherche »). */
+    @PluginMethod
+    public void quickConnect(PluginCall call) {
+        wanted = true;
+        engine.setListener(this);
+        engine.setForeground(true);
+        engine.quickConnect(call.getString("name"));
+        call.resolve(toJS(engine.info()));
+    }
+
+    // ---------- Réseau Wi-Fi créé par le téléphone (v5) ----------
+    private HotspotManager.Result hotspotResult(final PluginCall call) {
+        return new HotspotManager.Result() {
+            @Override
+            public void ok(JSONObject data) {
+                call.resolve(toJS(data));
+            }
+
+            @Override
+            public void fail(String code, String message) {
+                JSObject r = new JSObject();
+                r.put("error", code);
+                r.put("message", message);
+                call.resolve(r);
+            }
+        };
+    }
+
+    @PluginMethod
+    public void getHotspot(PluginCall call) {
+        call.resolve(toJS(engine.hotspot().state()));
+    }
+
+    @PluginMethod
+    public void startHotspot(final PluginCall call) {
+        final HotspotManager.Result r = hotspotResult(call);
+        Activity a = getActivity();
+        Runnable go = () -> engine.hotspot().startHost(r);
+        if (a != null) a.runOnUiThread(go);
+        else go.run();
+    }
+
+    @PluginMethod
+    public void stopHotspot(PluginCall call) {
+        engine.hotspot().stopHost();
+        call.resolve(toJS(engine.hotspot().state()));
+    }
+
+    @PluginMethod
+    public void joinHotspot(final PluginCall call) {
+        final String ssid = call.getString("ssid");
+        final String password = call.getString("password", "");
+        final int security = call.getInt("security", HotspotManager.SEC_WPA2);
+        final HotspotManager.Result r = hotspotResult(call);
+        Activity a = getActivity();
+        Runnable go = () -> engine.hotspot().join(ssid, password, security, r);
+        if (a != null) a.runOnUiThread(go);
+        else go.run();
+    }
+
+    @PluginMethod
+    public void leaveHotspot(PluginCall call) {
+        engine.hotspot().leave();
+        call.resolve(toJS(engine.hotspot().state()));
     }
 
     @PluginMethod

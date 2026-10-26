@@ -8,7 +8,7 @@ import {
   saveCachedState, setOutboxSignatures, type RelayOp,
 } from "./offline";
 import { isOnline } from "./net";
-import { Nearby, nearbyAvailable, nativeV4Available, type InboxFile, type Medium } from "./nearby";
+import { Nearby, nearbyAvailable, nativeV4Available, nativeV5Available, type InboxFile, type Medium } from "./nearby";
 
 // ---------------------------------------------------------------------------
 // Mode « sans Internet » : les téléphones proches (Bluetooth / Wi-Fi) s'échangent automatiquement
@@ -33,6 +33,8 @@ export const dmFromRelay = bus<{ opPayload: RelayOp }>();
 export const callMessage = bus<{ endpointId: string; userId: number | null; medium: Medium; msg: Record<string, unknown> }>();
 export const p2pStatus = bus<P2PStatus>();
 export const updateFromPeer = bus<{ kind: "bundle" | "apk"; path: string; version: string; notes: string | null }>();
+// Invitation à rejoindre le réseau Wi-Fi créé par un collègue (APK 5).
+export const hotspotInvite = bus<{ endpointId: string; userId: number | null; ssid: string; password: string | null; security: number }>();
 
 export type P2PStatus = { available: boolean; needsPermission: boolean; running: boolean; lastExchange: number | null };
 let status: P2PStatus = { available: false, needsPermission: false, running: false, lastExchange: null };
@@ -334,7 +336,7 @@ export type Peer = { endpointId: string; userId: number | null; name: string; co
 // Fréquence de la vérification en arrière-plan (Paramètres) : 15, 30, 60 ou 120 minutes.
 const INTERVAL_KEY = "g37.syncInterval";
 export function syncIntervalMinutes(): number {
-  try { return Number(localStorage.getItem(INTERVAL_KEY)) || 30; } catch { return 30; }
+  try { return Number(localStorage.getItem(INTERVAL_KEY)) || 15; } catch { return 15; }
 }
 export async function setSyncInterval(minutes: number) {
   try { localStorage.setItem(INTERVAL_KEY, String(minutes)); } catch { /* stockage indisponible */ }
@@ -404,6 +406,13 @@ async function onMessage(endpointId: string, data: string) {
     } else if (msg.kind === "apk" && share.apk && String(share.apk.code) === msg.version) {
       await Nearby.sendFile({ endpointId, path: share.apk.path, kind: "apk", name: String(share.apk.code) });
     }
+  } else if (msg.t === "hotspot") {
+    if (typeof msg.ssid !== "string" || !msg.ssid) return;
+    const p = peers.get(endpointId);
+    hotspotInvite.emit({
+      endpointId, userId: p?.userId ?? (Number(msg.from) || null), ssid: msg.ssid,
+      password: typeof msg.password === "string" ? msg.password : null, security: Number(msg.security) || 1,
+    });
   } else if (msg.t === "call") {
     const p = peers.get(endpointId);
     callMessage.emit({ endpointId, userId: p?.userId ?? userIdFromName(endpointId.replace(/^lan:/, "")), medium: endpointId.startsWith("lan:") ? "wifi" : "nearby", msg });
@@ -538,6 +547,24 @@ export async function startP2P(me: { id: number; pending: boolean }): Promise<vo
   }
   await writePacket();
   await processInbox();
+}
+
+// Relance immédiate de la recherche Bluetooth / Wi-Fi (APK 5 ; sinon redémarrage simple).
+export async function quickConnect(me: { id: number; pending: boolean }): Promise<boolean> {
+  if (!nearbyAvailable()) return false;
+  const perm = await Nearby.checkNearbyPermissions().catch(() => ({ nearby: false, microphone: false }));
+  if (!perm.nearby && !(await requestP2PPermissions())) return false;
+  if (!started) await startP2P(me);
+  const d = await getDevice();
+  const name = `G37:${me.id}:${d.deviceId.slice(2, 8)}`;
+  if (await nativeV5Available()) {
+    const info = await Nearby.quickConnect({ name }).catch(() => null);
+    for (const p of info?.peers ?? []) touchPeer(p.endpointId, { name: p.name, connected: p.connected, medium: p.medium ?? (p.endpointId.startsWith("lan:") ? "wifi" : "nearby") });
+  } else {
+    await Nearby.start({ name }).catch(() => {});
+  }
+  void Nearby.broadcastPacket().catch(() => {});
+  return true;
 }
 
 export async function stopP2P() {

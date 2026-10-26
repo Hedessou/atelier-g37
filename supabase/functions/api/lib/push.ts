@@ -57,6 +57,16 @@ async function accessToken(sa: ServiceAccount): Promise<string> {
   return cached.token;
 }
 
+// Firebase refuse tout le message si une clé de « data » est réservée : « from », « message_type »,
+// « notification », ou un nom qui commence par « google » ou « gcm ». (C'est ce qui bloquait les appels app fermée.)
+// « from » devient « caller » ; les autres reçoivent le préfixe « x_ ».
+function safeKey(k: string): string {
+  const low = k.toLowerCase();
+  if (low === "from") return "caller";
+  if (low === "message_type" || low === "notification" || low === "collapse_key" || low.startsWith("google") || low.startsWith("gcm")) return `x_${k}`;
+  return k;
+}
+
 export async function sendPush(targets: Array<string | PushTarget>, msg: PushMessage): Promise<{ sent: number; dead: string[] }> {
   const sa = await serviceAccount();
   const list: PushTarget[] = targets.map((t) => (typeof t === "string" ? { token: t, platform: null } : t));
@@ -64,7 +74,7 @@ export async function sendPush(targets: Array<string | PushTarget>, msg: PushMes
   const bearer = await accessToken(sa);
   const kind = msg.kind ?? "alert";
   const data: Record<string, string> = { title: msg.title, body: msg.body, kind, tag: msg.tag ?? "" };
-  for (const [k, v] of Object.entries(msg.data ?? {})) data[k] = String(v);
+  for (const [k, v] of Object.entries(msg.data ?? {})) data[safeKey(k)] = String(v);
   // Ancienne app : notification affichée par Android (pas de fin d'appel à afficher).
   const legacy = list.filter((t) => !(t.platform ?? "").startsWith("android3"));
   const modern = list.filter((t) => (t.platform ?? "").startsWith("android3"));

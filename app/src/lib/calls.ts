@@ -1,3 +1,4 @@
+import { toast } from "sonner";
 import { newId } from "./offline";
 import { isOnline } from "./net";
 import { Nearby, isWifiEndpoint, nativeSoundsAvailable, nativeV4Available, nearbyAvailable } from "./nearby";
@@ -541,7 +542,10 @@ async function startRoom(people: Array<{ userId: number; name: string }>, group:
     participants: people.map((p) => ({ ...p, status: "ringing" as const })) }));
   try {
     await micStream(video);
-    await api("g37/call_room", { action: "create", id: roomId, invite: people.map((p) => p.userId), group, video });
+    const created = await api<{ noPush?: Array<{ name: string }> }>("g37/call_room", { action: "create", id: roomId, invite: people.map((p) => p.userId), group, video });
+    // Collègue sans notifications enregistrées : l'appel ne sonnera chez lui que si son app est ouverte.
+    const noPush = created?.noPush ?? [];
+    if (noPush.length) toast.warning(`${noPush.map((x) => x.name).join(", ")} : notifications non activées sur son téléphone. L'appel ne sonnera que si son app est ouverte.`, { duration: 9000 });
   } catch (e) {
     cleanup();
     set({ phase: "idle" });

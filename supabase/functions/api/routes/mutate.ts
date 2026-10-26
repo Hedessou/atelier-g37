@@ -16,17 +16,27 @@ export const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("workAdd"), machineNo: z.number().int().min(1).max(28), title: z.string().min(1).max(300), status: z.enum(["todo", "done"]) }),
   z.object({ action: z.literal("workDone"), id: z.string().min(1) }),
   z.object({ action: z.literal("faultAdd"), machineNo: z.number().int().min(1).max(28), issue: z.string().min(1).max(300), notes: z.string().max(2000).nullable(), severity: z.enum(["basse", "moyenne", "haute"]), stoppedAt: z.coerce.date().nullable() }),
-  z.object({ action: z.literal("faultFix"), id: z.string().min(1), fix: z.string().max(2000).nullable(), restartedAt: z.coerce.date().nullable() }),
+  z.object({ action: z.literal("faultFix"), id: z.string().min(1), fix: z.string().max(2000).nullable(), restartedAt: z.coerce.date().nullable(), parts: z.array(z.object({ itemId: z.string().min(1).max(80), quantity: z.number().positive().max(100000) })).max(10).optional() }),
   z.object({ action: z.literal("cycle"), kind: z.enum(["grease", "lub", "sched"]), pointKey: z.string().min(1).max(40), from: z.number().int().min(1).max(28), to: z.number().int().min(1).max(28) }),
   z.object({ action: z.literal("cycleDate"), kind: z.enum(["grease", "lub", "sched"]), pointKey: z.string().min(1).max(40), machineNo: z.number().int().min(1).max(28), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
   z.object({ action: z.literal("cyclePointAdd"), kind: z.enum(["grease", "lub", "sched"]), name: z.string().trim().min(1).max(80), days: z.number().int().min(1).max(3650) }),
   z.object({ action: z.literal("cyclePointEdit"), id: z.string().min(1).max(80), name: z.string().trim().min(1).max(80), days: z.number().int().min(1).max(3650) }),
   z.object({ action: z.literal("cyclePointDelete"), id: z.string().min(1).max(80) }),
   z.object({ action: z.literal("maintPlan"), machineNo: z.number().int().min(1).max(28), next: z.coerce.date().nullable() }),
-  z.object({ action: z.literal("maintDone"), machineNo: z.number().int().min(1).max(28) }),
+  z.object({ action: z.literal("maintDone"), machineNo: z.number().int().min(1).max(28), checklist: z.object({
+    items: z.array(z.object({ text: z.string().trim().min(1).max(200), done: z.boolean(), note: z.string().max(300).nullable().optional(), extra: z.boolean().optional() })).max(80),
+    photoBefore: z.string().max(300).nullable().optional(), photoAfter: z.string().max(300).nullable().optional(), notes: z.string().max(1000).nullable().optional(),
+    saveExtras: z.boolean().optional(),
+  }).optional() }),
   z.object({ action: z.literal("stockQty"), id: z.string().min(1), quantity: z.number().min(0), baseQuantity: z.number().min(0).nullable().optional() }),
-  z.object({ action: z.literal("stockAdd"), name: z.string().trim().min(1).max(120), category: z.string().trim().min(1).max(60), unit: z.string().trim().min(1).max(20), quantity: z.number().min(0).max(1000000), minimumQuantity: z.number().min(0).max(1000000) }),
-  z.object({ action: z.literal("stockEdit"), id: z.string().min(1), name: z.string().trim().min(1).max(120), category: z.string().trim().min(1).max(60), unit: z.string().trim().min(1).max(20), minimumQuantity: z.number().min(0).max(1000000) }),
+  z.object({ action: z.literal("stockAdd"), name: z.string().trim().min(1).max(120), category: z.string().trim().min(1).max(60), unit: z.string().trim().min(1).max(20), quantity: z.number().min(0).max(1000000), minimumQuantity: z.number().min(0).max(1000000), unitPrice: z.number().min(0).max(1e9).nullable().optional(), leadDays: z.number().int().min(1).max(365).optional() }),
+  z.object({ action: z.literal("stockEdit"), id: z.string().min(1), name: z.string().trim().min(1).max(120), category: z.string().trim().min(1).max(60), unit: z.string().trim().min(1).max(20), minimumQuantity: z.number().min(0).max(1000000), unitPrice: z.number().min(0).max(1e9).nullable().optional(), leadDays: z.number().int().min(1).max(365).optional() }),
+  z.object({ action: z.literal("stockOut"), itemId: z.string().min(1).max(80), quantity: z.number().positive().max(100000), machineNo: z.number().int().min(1).max(28).nullable(), failureId: z.string().max(80).nullable().optional(), note: z.string().max(300).nullable().optional() }),
+  z.object({ action: z.literal("stockIn"), itemId: z.string().min(1).max(80), quantity: z.number().positive().max(1000000), note: z.string().max(300).nullable().optional() }),
+  z.object({ action: z.literal("checklistStepAdd"), text: z.string().trim().min(1).max(200) }),
+  z.object({ action: z.literal("checklistStepEdit"), id: z.string().min(1).max(80), text: z.string().trim().min(1).max(200) }),
+  z.object({ action: z.literal("checklistStepDelete"), id: z.string().min(1).max(80) }),
+  z.object({ action: z.literal("checklistStepMove"), id: z.string().min(1).max(80), dir: z.enum(["up", "down"]) }),
   z.object({ action: z.literal("stockDelete"), id: z.string().min(1) }),
   z.object({ action: z.literal("shiftSet"), day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), team: z.enum(["A", "B", "C"]), shiftCode: z.enum(["m", "s", "n", "r", ""]) }),
   z.object({ action: z.literal("shiftRotate"), month: z.string().regex(/^\d{4}-\d{2}$/) }),
@@ -92,6 +102,47 @@ async function cycleKeys(kind: "grease" | "lub" | "sched"): Promise<string[]> {
   return [...staticKeys(kind), ...rows.map((r: any) => r.pointKey)];
 }
 
+// ---- Magasin : sorties de pièces, consommation réelle, alerte de réapprovisionnement ----
+const STOCK_ROLES = ["superviseur", "technicien", "shift", "forman", "manager"];
+
+// Consommation moyenne par jour sur 60 jours, jours de stock restants, et alerte (une fois par jour et par article).
+async function stockAlert(itemId: string, me: Me): Promise<void> {
+  const rows = await sql`SELECT i.name, i.quantity, i.minimum_quantity, i.lead_days, i.unit,
+      COALESCE((SELECT sum(m.quantity) FROM stock_movements m WHERE m.item_id = i.id AND m.movement_type = 'sortie' AND m.created_at > now() - interval '60 days'), 0) AS used60
+    FROM stock_items i WHERE i.id = ${itemId}`;
+  const it = rows[0];
+  if (!it) return;
+  const qty = Number(it.quantity);
+  const min = Number(it.minimum_quantity) || g37.STOCK_ALERT;
+  const perDay = Number(it.used60) / 60;
+  const daysLeft = perDay > 0 ? qty / perDay : null;
+  const lead = Number(it.lead_days) || 14;
+  const low = qty < min;
+  const soon = daysLeft != null && daysLeft <= lead;
+  if (!low && !soon) return;
+  const key = `stock-alert:${itemId}:${new Date(Date.now() + 3600000).toISOString().slice(0, 10)}`;
+  const claimed = await sql`INSERT INTO notification_log (key) VALUES (${key}) ON CONFLICT (key) DO NOTHING RETURNING key`;
+  if (!claimed.length) return;
+  const body = soon && daysLeft != null
+    ? `${it.name} : ${qty} ${it.unit} restant(s), environ ${Math.max(0, Math.floor(daysLeft))} jour(s) au rythme actuel (délai ${lead} j)`
+    : `${it.name} : ${qty} ${it.unit} restant(s) (seuil ${min})`;
+  await notifyRoles({ jobRoles: STOCK_ROLES, excludeUserId: me.id, tag: `stock-${itemId}`, title: "À commander", body, data: { tab: "magasin" } });
+}
+
+async function takeOut(me: Me, now: Date, itemId: string, quantity: number, machineNo: number | null, failureId: string | null, note: string | null): Promise<string | null> {
+  const item = await db.selectFrom("stockItems").select(["name", "quantity", "unit", "unitPrice"]).where("id", "=", itemId).executeTakeFirst();
+  if (!item) return "Cet article a été supprimé entre-temps.";
+  const have = Number(item.quantity);
+  await db.updateTable("stockItems").set({ quantity: Math.max(0, have - quantity), updatedAt: now }).where("id", "=", itemId).execute();
+  await db.insertInto("stockMovements").values({
+    id: nanoid(), itemId, movementType: "sortie", quantity, createdAt: now, machineNo, failureId, authorName: me.displayName,
+    unitCost: item.unitPrice ?? null,
+    reason: note?.trim() || `Sortie par ${me.displayName}${machineNo ? ` pour la M/C ${machineNo}` : ""}`,
+  }).execute();
+  await stockAlert(itemId, me);
+  return have < quantity ? `${item.name} : le stock affichait ${have} ${item.unit}, vérifie l'inventaire.` : null;
+}
+
 export async function loadMe(userId: number): Promise<Me | null> {
   const row = await db.selectFrom("users").select(["id", "displayName", "role", "jobRole", "pending"]).where("id", "=", userId).executeTakeFirst();
   return (row as Me | undefined) ?? null;
@@ -112,7 +163,7 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       const w1 = await moveGears("G", cur.runG ?? null, input.runG, input.no, me, now);
       const w2 = await moveGears("H", cur.runH ?? null, input.runH, input.no, me, now);
       if (cur.status === "service" && input.status !== "service") {
-        await notifyRoles({ jobRoles: ["superviseur", "technicien", "shift"], excludeUserId: me.id, tag: `arret-${input.no}`, title: `M/C ${input.no} à l'arrêt`, body: `${input.stopReason ?? "motif non précisé"} — saisi par ${me.displayName}` });
+        await notifyRoles({ dutyFirst: true, jobRoles: ["superviseur", "technicien", "shift"], excludeUserId: me.id, tag: `arret-${input.no}`, title: `M/C ${input.no} à l'arrêt`, body: `${input.stopReason ?? "motif non précisé"} — saisi par ${me.displayName}` });
       } else if (cur.status !== "service" && input.status === "service") {
         await notifyRoles({ jobRoles: ["superviseur", "prodsup", "prodman"], excludeUserId: me.id, tag: `reprise-${input.no}`, title: `M/C ${input.no} remise en service`, body: `Remise en service par ${me.displayName}` });
       }
@@ -135,7 +186,7 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
     case "workAdd": {
       if (!need("works")) return deny("Tu n'as pas le droit d'ajouter un travail.");
       await db.insertInto("works").values({ id: nanoid(), machineNo: input.machineNo, title: input.title, status: input.status, auto: false, authorId: me.id, authorName: me.displayName, createdAt: now }).execute();
-      if (input.status === "todo") await notifyRoles({ jobRoles: ["superviseur", "technicien", "genmaint"], excludeUserId: me.id, tag: `travail-a-faire-${input.machineNo}`, title: `Travail à effectuer — M/C ${input.machineNo}`, body: `${input.title} — ajouté par ${me.displayName}` });
+      if (input.status === "todo") await notifyRoles({ dutyFirst: true, jobRoles: ["superviseur", "technicien", "genmaint"], excludeUserId: me.id, tag: `travail-a-faire-${input.machineNo}`, title: `Travail à effectuer — M/C ${input.machineNo}`, body: `${input.title} — ajouté par ${me.displayName}` });
       return ok();
     }
     case "workDone": {
@@ -160,8 +211,16 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       if (fault.status === "resolue") return ok("Cette panne avait déjà été réglée par un collègue.");
       await db.updateTable("failures").set({ status: "resolue", resolvedAt: now, restartedAt: input.restartedAt, technician: me.displayName, fixedBy: me.displayName, notes: input.fix ? input.fix : undefined }).where("id", "=", input.id).execute();
       const no = Number(fault.machineId.replace(/\D/g, "")) || 0;
+      // Pièces utilisées pour la réparation : sorties du magasin liées à la panne et à la machine.
+      const warnings: string[] = [];
+      if (input.parts?.length && need("stock")) {
+        for (const p of input.parts) {
+          const w = await takeOut(me, now, p.itemId, p.quantity, no || null, input.id, `Réparation : ${fault.issue}`);
+          if (w) warnings.push(w);
+        }
+      }
       await notifyRoles({ jobRoles: ["superviseur", "prodsup", "prodman"], excludeUserId: me.id, tag: `regle-${input.id}`, title: `Panne réglée — M/C ${no}`, body: `${fault.issue} — réglée par ${me.displayName}` });
-      return ok();
+      return ok(warnings.join(" ") || undefined);
     }
     case "cycleDate": {
       const perm: Perm = input.kind === "sched" ? "works" : "grease";
@@ -217,9 +276,33 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
     case "maintDone": {
       if (!need("maint")) return deny("Tu n'as pas le droit de valider une maintenance.");
       const next = new Date(now.getTime() + 30 * 86400000);
-      await db.insertInto("maintenanceRecords").values({ id: nanoid(), machineId: machineId(input.machineNo), maintenanceType: "Visite périodique", performedAt: now, nextDue: next, technician: me.displayName }).execute();
+      const recordId = nanoid();
+      const cl = input.checklist;
+      const doneCount = cl ? cl.items.filter((i) => i.done).length : 0;
+      const summary = cl ? `Check-list : ${doneCount}/${cl.items.length} étape(s) faite(s)${cl.notes?.trim() ? ` — ${cl.notes.trim()}` : ""}` : null;
+      await db.insertInto("maintenanceRecords").values({ id: recordId, machineId: machineId(input.machineNo), maintenanceType: "Visite périodique", performedAt: now, nextDue: next, technician: me.displayName, notes: summary }).execute();
       await db.updateTable("machines").set({ lastMaintenance: now, nextMaintenance: next }).where("id", "=", machineId(input.machineNo)).execute();
-      return ok();
+      if (cl) {
+        const photo = (k: string | null | undefined) => (k && /^chat\/[\w.\-]+$/.test(k) ? k : null);
+        await sql`INSERT INTO maint_checklists (id, machine_no, maintenance_id, done_at, author_name, items, photo_before, photo_after, notes)
+          VALUES (${nanoid()}, ${input.machineNo}, ${recordId}, ${now}, ${me.displayName}, ${sql.json(cl.items.map((i) => ({ text: i.text, done: i.done, note: i.note?.trim() || null, extra: !!i.extra })))},
+            ${photo(cl.photoBefore)}, ${photo(cl.photoAfter)}, ${cl.notes?.trim() || null})`;
+        // Étapes ajoutées pendant la visite : gardées dans le modèle si la personne a le droit de le modifier.
+        if (cl.saveExtras && need("specs")) {
+          const known = new Set((await sql`SELECT lower(text) AS t FROM checklist_steps`).map((r: any) => r.t));
+          const pos = Number((await sql`SELECT COALESCE(max(position), 0) AS p FROM checklist_steps`)[0].p);
+          let k = 0;
+          for (const i of cl.items.filter((x) => x.extra && !known.has(x.text.toLowerCase()))) {
+            k++;
+            await sql`INSERT INTO checklist_steps (id, position, text, created_by) VALUES (${nanoid()}, ${pos + k * 10}, ${i.text}, ${me.displayName})`;
+          }
+        }
+        if (doneCount < cl.items.length) {
+          await notifyRoles({ jobRoles: ["superviseur", "genmaint", "forman"], excludeUserId: me.id, tag: `checklist-${input.machineNo}`, title: `Maintenance M/C ${input.machineNo} incomplète`,
+            body: `${cl.items.length - doneCount} étape(s) non faite(s) — ${me.displayName}`, data: { tab: "maintenance" } });
+        }
+      }
+      return ok(cl ? `Maintenance de la M/C ${input.machineNo} enregistrée (${doneCount}/${cl.items.length}).` : undefined);
     }
     case "stockQty": {
       if (!need("stock")) return deny("Tu n'as pas le droit de modifier le magasin.");
@@ -237,8 +320,8 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
     case "stockAdd": {
       if (!need("stockManage")) return deny("Seuls l'admin et le superviseur ajoutent du matériel au magasin.");
       const id = nanoid();
-      await db.insertInto("stockItems").values({ id, name: input.name, category: input.category, unit: input.unit, quantity: input.quantity, minimumQuantity: input.minimumQuantity }).execute();
-      await db.insertInto("stockMovements").values({ id: nanoid(), itemId: id, movementType: "entrée", quantity: input.quantity, reason: `Création par ${me.displayName}` }).execute();
+      await db.insertInto("stockItems").values({ id, name: input.name, category: input.category, unit: input.unit, quantity: input.quantity, minimumQuantity: input.minimumQuantity, unitPrice: input.unitPrice ?? null, leadDays: input.leadDays ?? 14 }).execute();
+      await db.insertInto("stockMovements").values({ id: nanoid(), itemId: id, movementType: "entrée", quantity: input.quantity, reason: `Création par ${me.displayName}`, authorName: me.displayName }).execute();
       if (input.quantity < input.minimumQuantity) await notifyRoles({ jobRoles: ["superviseur", "technicien", "shift"], excludeUserId: me.id, tag: `stock-${id}`, title: "Stock sous le seuil", body: `${input.name} : ${input.quantity} (seuil ${input.minimumQuantity})` });
       return ok(`« ${input.name} » ajouté au magasin.`);
     }
@@ -246,7 +329,8 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       if (!need("stockManage")) return deny("Seuls l'admin et le superviseur modifient le matériel du magasin.");
       const cur = await db.selectFrom("stockItems").select(["quantity", "minimumQuantity"]).where("id", "=", input.id).executeTakeFirst();
       if (!cur) return deny("Article introuvable.", 404);
-      await db.updateTable("stockItems").set({ name: input.name, category: input.category, unit: input.unit, minimumQuantity: input.minimumQuantity, updatedAt: now }).where("id", "=", input.id).execute();
+      await db.updateTable("stockItems").set({ name: input.name, category: input.category, unit: input.unit, minimumQuantity: input.minimumQuantity, updatedAt: now,
+        ...(input.unitPrice !== undefined ? { unitPrice: input.unitPrice } : {}), ...(input.leadDays !== undefined ? { leadDays: input.leadDays } : {}) }).where("id", "=", input.id).execute();
       const qty = Number(cur.quantity);
       if (qty < input.minimumQuantity && qty >= (Number(cur.minimumQuantity) || 0)) await notifyRoles({ jobRoles: ["superviseur", "technicien", "shift"], excludeUserId: me.id, tag: `stock-${input.id}`, title: "Stock sous le seuil", body: `${input.name} : ${qty} restant(s) (seuil ${input.minimumQuantity})` });
       return ok("Article modifié.");
@@ -258,6 +342,46 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       await db.deleteFrom("stockMovements").where("itemId", "=", input.id).execute();
       await db.deleteFrom("stockItems").where("id", "=", input.id).execute();
       return ok(`« ${cur.name} » supprimé du magasin.`);
+    }
+    case "stockOut": {
+      if (!need("stock")) return deny("Tu n'as pas le droit de sortir des pièces du magasin.");
+      const w = await takeOut(me, now, input.itemId, input.quantity, input.machineNo, input.failureId ?? null, input.note ?? null);
+      return ok(w ?? undefined);
+    }
+    case "stockIn": {
+      if (!need("stock")) return deny("Tu n'as pas le droit d'enregistrer une arrivée au magasin.");
+      const item = await db.selectFrom("stockItems").select(["name", "quantity"]).where("id", "=", input.itemId).executeTakeFirst();
+      if (!item) return ok("Cet article a été supprimé entre-temps.");
+      await db.updateTable("stockItems").set({ quantity: Number(item.quantity) + input.quantity, updatedAt: now }).where("id", "=", input.itemId).execute();
+      await db.insertInto("stockMovements").values({ id: nanoid(), itemId: input.itemId, movementType: "entrée", quantity: input.quantity, createdAt: now, authorName: me.displayName, reason: input.note?.trim() || `Arrivée enregistrée par ${me.displayName}` }).execute();
+      return ok(`${item.name} : +${input.quantity} enregistré.`);
+    }
+    case "checklistStepAdd": {
+      if (!need("specs")) return deny("Seuls l'admin, le superviseur, le manager et le Boss modifient la check-list.");
+      const pos = Number((await sql`SELECT COALESCE(max(position), 0) AS p FROM checklist_steps`)[0].p);
+      await sql`INSERT INTO checklist_steps (id, position, text, created_by) VALUES (${nanoid()}, ${pos + 10}, ${input.text}, ${me.displayName})`;
+      return ok("Étape ajoutée.");
+    }
+    case "checklistStepEdit": {
+      if (!need("specs")) return deny("Seuls l'admin, le superviseur, le manager et le Boss modifient la check-list.");
+      await sql`UPDATE checklist_steps SET text = ${input.text}, created_by = ${me.displayName}, updated_at = now() WHERE id = ${input.id}`;
+      return ok("Étape modifiée.");
+    }
+    case "checklistStepDelete": {
+      if (!need("specs")) return deny("Seuls l'admin, le superviseur, le manager et le Boss modifient la check-list.");
+      await sql`DELETE FROM checklist_steps WHERE id = ${input.id}`;
+      return ok("Étape retirée.");
+    }
+    case "checklistStepMove": {
+      if (!need("specs")) return deny("Seuls l'admin, le superviseur, le manager et le Boss modifient la check-list.");
+      const steps = await sql`SELECT id, position FROM checklist_steps ORDER BY position, id`;
+      const i = steps.findIndex((s: any) => s.id === input.id);
+      const j = input.dir === "up" ? i - 1 : i + 1;
+      if (i < 0 || j < 0 || j >= steps.length) return ok();
+      const order = steps.map((s: any) => s.id);
+      [order[i], order[j]] = [order[j], order[i]];
+      for (let k = 0; k < order.length; k++) await sql`UPDATE checklist_steps SET position = ${(k + 1) * 10} WHERE id = ${order[k]}`;
+      return ok();
     }
     case "shiftSet": {
       if (!need("shifts")) return deny("Seuls l'admin et le superviseur modifient le planning des quarts.");

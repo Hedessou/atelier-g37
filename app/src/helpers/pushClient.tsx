@@ -4,6 +4,7 @@ import { postG37Push } from "../endpoints/g37/push_POST.schema";
 import { PUSH_ENABLED } from "../lib/config";
 import { isOnline, onOnlineChange } from "../lib/net";
 import { nativeSoundsAvailable } from "../lib/nearby";
+import { session } from "../lib/session";
 
 // Notifications Android (Firebase). Même interface que l'ancienne version web :
 // enablePush, disablePush, isPushOptedIn, onPushEnabledChange, onPushMessage.
@@ -30,14 +31,18 @@ export function onPushMessage(cb: (p: { title?: string; body?: string; data?: Re
   return () => { messageListeners.delete(cb); };
 }
 
+// Le jeton est renvoyé à chaque lancement et après chaque connexion (il est lié au compte connecté) :
+// un téléphone qui a changé de compte ou dont le serveur a oublié le jeton recevra quand même appels et alertes.
+let syncedThisRun: string | null = null;
 async function sendTokenToServer() {
   const token = localStorage.getItem(TOKEN_KEY);
   // « android3 » : le téléphone fait sonner lui-même (sonnerie choisie, écran d'appel même app fermée).
   const platform = (await nativeSoundsAvailable()) ? "android3" : "android";
-  const synced = `${platform}:${token}`;
-  if (!token || localStorage.getItem(SYNCED_KEY) === synced || !isOnline()) return;
+  const synced = `${platform}:${token}:${session.user()?.id ?? ""}`;
+  if (!token || !session.token() || syncedThisRun === synced || !isOnline()) return;
   try {
     await postG37Push({ op: "save", token, platform });
+    syncedThisRun = synced;
     localStorage.setItem(SYNCED_KEY, synced);
   } catch (e) {
     console.warn("Jeton de notification non envoyé (nouvel essai au retour du réseau)", e);
@@ -99,4 +104,16 @@ export async function restorePush() {
 
 export function pushTokenForLogout(): string | null {
   try { return localStorage.getItem(TOKEN_KEY); } catch { return null; }
+}
+
+// Après chaque connexion : jeton renvoyé, ou notifications activées automatiquement la première fois
+// (sinon les appels et messages n'arrivent pas app fermée).
+let autoPushTried = false;
+export function installPushAutoSync() {
+  if (!pushSupported()) return;
+  session.onChange((user) => {
+    if (!user) { syncedThisRun = null; return; }
+    if (isPushOptedIn()) void sendTokenToServer();
+    else if (!autoPushTried) { autoPushTried = true; void enablePush().catch(() => {}); }
+  });
 }

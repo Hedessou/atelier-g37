@@ -44,6 +44,23 @@ export type G37StockItem = {
   unit: string;
   quantity: string;
   minimumQuantity: string;
+  // v1.1 : prix unitaire (F CFA), délai de réapprovisionnement, consommation réelle.
+  unitPrice?: string | null;
+  leadDays?: number;
+  used30?: number;
+  perDay?: number;
+  daysLeft?: number | null;
+};
+
+export type G37StockOut = {
+  id: string; itemId: string; itemName: string; unit: string; quantity: number; unitCost: number | null;
+  machineNo: number | null; failureId: string | null; authorName: string | null; reason: string | null; createdAt: Date | string;
+};
+export type G37ChecklistStep = { id: string; position: number; text: string };
+export type G37ChecklistItem = { text: string; done: boolean; note?: string | null; extra?: boolean };
+export type G37Checklist = {
+  id: string; machineNo: number; maintenanceId: string | null; doneAt: Date | string; authorName: string | null;
+  items: G37ChecklistItem[]; notes: string | null; photoBeforeUrl: string | null; photoAfterUrl: string | null;
 };
 
 export type G37Work = {
@@ -120,6 +137,11 @@ export type OutputType = {
   // Mode sans Internet : clés publiques des téléphones et actions déjà appliquées par le serveur.
   devices?: G37Device[];
   appliedOpIds?: string[];
+  // v1.1 : sorties du magasin, check-list de maintenance, équipe en poste.
+  stockOuts?: G37StockOut[];
+  checklistSteps?: G37ChecklistStep[];
+  checklists?: G37Checklist[];
+  duty?: { team: string; code: string } | null;
 };
 
 export type G37Device = { deviceId: string; userId: number; signJwk: JsonWebKey; encJwk: JsonWebKey };

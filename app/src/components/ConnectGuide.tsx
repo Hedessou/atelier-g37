@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { OutputType as State } from "../endpoints/g37/state_GET.schema";
-import { Nearby, nativeSoundsAvailable, nativeV4Available, nearbyAvailable, type NetworkStatus, type SettingKey, type SystemStatus } from "../lib/nearby";
-import { getPeers, peersChanged, reachableEnabled, requestP2PPermissions, setReachable, startP2P, type Peer } from "../lib/p2p";
+import { Nearby, explainNearbyError, nativeSoundsAvailable, nativeV4Available, nativeV5Available, nearbyAvailable, type HotspotState, type NearbyError, type NetworkStatus, type SettingKey, type SystemStatus } from "../lib/nearby";
+import { getPeers, peersChanged, quickConnect, reachableEnabled, requestP2PPermissions, setReachable, startP2P, type Peer } from "../lib/p2p";
 import styles from "./SettingsView.module.css";
 import g from "./ConnectGuide.module.css";
 
@@ -18,12 +18,28 @@ export const ConnectGuide = ({ state, lang, onBack }: Props) => {
   const [peers, setPeers] = useState<Peer[]>(getPeers());
   const [native, setNative] = useState<boolean | null>(null);
   const [reach, setReach] = useState(reachableEnabled());
+  // APK 5 : relance rapide, réseau Wi-Fi créé par ce téléphone, erreurs récentes.
+  const [v5, setV5] = useState<boolean | null>(null);
+  const [hs, setHs] = useState<HotspotState | null>(null);
+  const [errs, setErrs] = useState<NearbyError[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [joinSsid, setJoinSsid] = useState("");
+  const [joinPass, setJoinPass] = useState("");
 
   const refresh = useCallback(async () => {
     const v4 = await nativeV4Available();
     setNative(v4);
     if (await nativeSoundsAvailable()) setSys(await Nearby.getSystemStatus().catch(() => null));
     if (v4) setNet(await Nearby.getNetworkStatus().catch(() => null));
+    const five = await nativeV5Available();
+    setV5(five);
+    if (five) {
+      const info = await Nearby.getInfo().catch(() => null);
+      setHs(info?.hotspot ?? (await Nearby.getHotspot().catch(() => null)));
+      setErrs((info?.errors ?? []).filter((e) => Date.now() - e.at < 15 * 60000).slice(0, 3));
+    }
   }, []);
   useEffect(() => {
     void refresh();
@@ -39,6 +55,63 @@ export const ConnectGuide = ({ state, lang, onBack }: Props) => {
   };
   const Btn = ({ which, children }: { which: SettingKey; children: string }) =>
     native ? <button className={styles.small} onClick={() => void open(which)}>{children}</button> : null;
+
+  const me = { id: state.me.id, pending: state.me.pending };
+  const userName = (id: number) => state.users.find((u) => u.id === id)?.displayName;
+
+  const restartSearch = async () => {
+    setSearching(true);
+    const ok = await quickConnect(me).catch(() => false);
+    if (!ok) toast.error(t("Autorise « Appareils à proximité » pour relier les téléphones.", "Allow “Nearby devices” to link phones."));
+    setTimeout(() => { setSearching(false); void refresh(); }, 9000);
+  };
+
+  const hotspotError = (code?: string) => {
+    switch (code) {
+      case "permission": return t("Autorise la position et allume la Localisation, puis réessaie.", "Allow location and turn Location on, then retry.");
+      case "incompatible": return t("Le point d'accès classique est déjà allumé sur ce téléphone : utilise-le (étape 3) ou éteins-le.", "The regular hotspot is already on: use it (step 3) or turn it off.");
+      case "disallowed": return t("Ce téléphone interdit le partage Wi-Fi (règle de l'entreprise ou de l'opérateur).", "This phone forbids Wi-Fi sharing (company or carrier rule).");
+      case "unsupported": return t("Il faut Android 8 ou plus récent.", "Android 8 or newer is needed.");
+      case "refused": return t("Réseau introuvable ou connexion refusée. Rapproche-toi du téléphone base et réessaie.", "Network not found or refused. Move closer to the base phone and retry.");
+      case "hosting": return t("Ce téléphone a déjà créé un réseau.", "This phone already created a network.");
+      default: return t("Le téléphone n'a pas pu le faire. Réessaie, ou utilise le point d'accès classique (étape 3).", "The phone couldn't do it. Retry, or use the regular hotspot (step 3).");
+    }
+  };
+
+  const createNetwork = async () => {
+    setBusy(true);
+    try {
+      await Nearby.requestNearbyPermissions({ location: true }).catch(() => null);
+      let r = await Nearby.startHotspot();
+      if (r.error === "permission" && sys?.location === false) { await open("location"); return; }
+      if (r.error === "busy") { await new Promise((res) => setTimeout(res, 1500)); r = await Nearby.startHotspot(); }
+      if (r.error) toast.error(hotspotError(r.error));
+      else { setHs(r); toast.success(t("Réseau créé : les collègues reliés reçoivent une invitation.", "Network created: linked colleagues get an invitation.")); }
+    } catch {
+      toast.error(hotspotError());
+    } finally {
+      setBusy(false);
+      void refresh();
+    }
+  };
+
+  const stopNetwork = async () => { setHs(await Nearby.stopHotspot().catch(() => null)); void refresh(); };
+  const leaveNetwork = async () => { setHs(await Nearby.leaveHotspot().catch(() => null)); void refresh(); };
+  const joinNetwork = async () => {
+    if (!joinSsid.trim()) return;
+    setBusy(true);
+    try {
+      await Nearby.requestNearbyPermissions({ location: true }).catch(() => null);
+      const r = await Nearby.joinHotspot({ ssid: joinSsid.trim(), password: joinPass });
+      if (r.error) toast.error(hotspotError(r.error));
+      else { setHs(r); setJoinOpen(false); toast.success(t("Relié au réseau", "Joined network") + ` ${joinSsid.trim()}`); }
+    } catch {
+      toast.error(hotspotError());
+    } finally {
+      setBusy(false);
+      void refresh();
+    }
+  };
 
   const linked = peers.filter((p) => p.connected);
   const names = (list: Peer[]) => [...new Set(list.map((p) => state.users.find((u) => u.id === p.userId)?.displayName ?? t("Collègue", "Colleague")))];
@@ -60,6 +133,73 @@ export const ConnectGuide = ({ state, lang, onBack }: Props) => {
         <button className={styles.back} onClick={onBack} aria-label={t("Retour", "Back")}>‹</button>
         <h1 className={styles.h1}>{t("Connexion sans Internet", "Offline connection")}</h1>
       </div>
+
+      {nearbyAvailable() && (
+        <section className={`${styles.card} ${g.quick}`}>
+          <div className={g.quickHead}>
+            <div>
+              <h2 className={styles.h2}>{t("Connexion rapide", "Quick connection")}</h2>
+              <p className={styles.note}>{linked.length
+                ? t(`${linked.length} collègue(s) relié(s) en ce moment.`, `${linked.length} colleague(s) linked right now.`)
+                : t("Personne de relié. Les deux téléphones doivent avoir l'app ouverte la première fois.", "Nobody linked. Both phones should have the app open the first time.")}</p>
+            </div>
+            <span className={`${g.badge} ${linked.length ? g.badgeOk : ""}`}>{linked.length}</span>
+          </div>
+          <button className={styles.primary} disabled={searching} onClick={() => void restartSearch()}>
+            {searching ? t("Recherche des collègues…", "Searching for colleagues…") : t("Relancer la recherche (Bluetooth + Wi-Fi)", "Restart search (Bluetooth + Wi-Fi)")}
+          </button>
+
+          {v5 === false && native && (
+            <p className={styles.note}>{t("Installe la nouvelle version de l'app (APK 5) pour une liaison Bluetooth plus fiable et le réseau Wi-Fi automatique.", "Install the new app (APK 5) for a more reliable Bluetooth link and the automatic Wi-Fi network.")}</p>
+          )}
+
+          {v5 && hs?.hosting && (
+            <div className={g.net}>
+              <span className={g.netTitle}>{t("Réseau Wi-Fi créé par ce téléphone", "Wi-Fi network created by this phone")}</span>
+              <div className={g.cred}><span className={g.credLabel}>{t("Nom", "Name")}</span><span className={g.credValue}>{hs.ssid}</span></div>
+              {hs.password && <div className={g.cred}><span className={g.credLabel}>{t("Mot de passe", "Password")}</span><span className={g.credValue}>{hs.password}</span></div>}
+              <p className={styles.note}>{t("Les collègues reliés en Bluetooth reçoivent une invitation à le rejoindre. Les autres peuvent le choisir dans leurs réglages Wi-Fi avec ce nom et ce mot de passe. Garde ce téléphone allumé et l'app ouverte en arrière-plan.", "Colleagues linked by Bluetooth get an invitation. Others can pick it in their Wi-Fi settings with this name and password. Keep this phone on with the app in the background.")}</p>
+              <button className={styles.small} onClick={() => void stopNetwork()}>{t("Arrêter le réseau", "Stop network")}</button>
+            </div>
+          )}
+          {v5 && !hs?.hosting && hs?.joined && (
+            <div className={g.net}>
+              <span className={g.netTitle}>{t("Relié au réseau", "Joined network")} « {hs.joinedSsid} »</span>
+              <p className={styles.note}>{t("Pendant ce temps, l'app n'utilise pas Internet. Quitte le réseau pour revenir à Internet.", "Meanwhile the app doesn't use the Internet. Leave the network to get Internet back.")}</p>
+              <button className={styles.small} onClick={() => void leaveNetwork()}>{t("Quitter ce réseau", "Leave network")}</button>
+            </div>
+          )}
+          {v5 && hs?.supported && !hs.hosting && !hs.joined && (
+            <div className={g.net}>
+              <span className={g.netTitle}>{t("Plusieurs téléphones ? Un seul sert de base", "Several phones? One acts as the base")}</span>
+              <p className={styles.note}>{t("Le téléphone base crée un réseau Wi-Fi (sans Internet) ; les autres le rejoignent d'un geste. Plus rapide que le Bluetooth : appels vidéo, synchro instantanée.", "The base phone creates a Wi-Fi network (no Internet); others join with one tap. Faster than Bluetooth: video calls, instant sync.")}</p>
+              <div className={g.btnRow}>
+                <button className={styles.small} disabled={busy} onClick={() => void createNetwork()}>{t("Créer le réseau ici", "Create network here")}</button>
+                <button className={styles.small} disabled={busy} onClick={() => setJoinOpen((o) => !o)}>{t("Rejoindre un réseau", "Join a network")}</button>
+              </div>
+              {joinOpen && (
+                <div className={g.joinForm}>
+                  <input className={g.input} value={joinSsid} onChange={(e) => setJoinSsid(e.target.value)} placeholder={t("Nom du réseau (ex. AndroidShare_1234)", "Network name (e.g. AndroidShare_1234)")} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+                  <input className={g.input} value={joinPass} onChange={(e) => setJoinPass(e.target.value)} placeholder={t("Mot de passe", "Password")} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+                  <button className={styles.primary} disabled={busy || !joinSsid.trim()} onClick={() => void joinNetwork()}>{t("Rejoindre", "Join")}</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {errs.length > 0 && (
+            <div className={g.errs}>
+              <span className={g.netTitle}>{t("Derniers soucis de liaison", "Recent link problems")}</span>
+              {errs.map((e) => (
+                <span key={`${e.at}-${e.code}`} className={g.err}>
+                  <span className={g.errTime}>{new Date(e.at).toLocaleTimeString(fr ? "fr-FR" : "en-GB", { hour: "2-digit", minute: "2-digit" })}</span>
+                  {explainNearbyError(e, fr, userName)}
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className={styles.card}>
         <h2 className={styles.h2}>{t("Ce téléphone en ce moment", "This phone right now")}</h2>

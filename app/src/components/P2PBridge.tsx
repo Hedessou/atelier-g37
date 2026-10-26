@@ -5,7 +5,8 @@ import { Capacitor } from "@capacitor/core";
 import { useG37, G37_STATE_KEY } from "../helpers/useG37";
 import { useOnline } from "../lib/net";
 import { realtime } from "../lib/realtime";
-import { ensureP2PListeners, flushRelay, getSecrets, processInbox, refreshSecrets, registerDevice, startP2P, stopP2P } from "../lib/p2p";
+import { toast } from "sonner";
+import { ensureP2PListeners, flushRelay, getSecrets, hotspotInvite, processInbox, refreshSecrets, registerDevice, startP2P, stopP2P } from "../lib/p2p";
 import { onNewDm, refreshDms } from "../lib/dms";
 import { checkRinging, declineFromNotification, handleLaunchCall, onInternetSignal, setCallIdentity } from "../lib/calls";
 import { Nearby, isWifiEndpoint, nativeSoundsAvailable, type LaunchData, type RingingCall } from "../lib/nearby";
@@ -77,6 +78,35 @@ export const P2PBridge = () => {
     return () => { void off?.remove(); };
   }, [myId]);
 
+  // Un collègue relié en Bluetooth a créé un réseau Wi-Fi : proposer de le rejoindre (une seule fois par réseau).
+  const users = state?.users;
+  useEffect(() => hotspotInvite.on((inv) => {
+    const key = `g37.hotspotAsk.${inv.ssid}`;
+    try {
+      const at = Number(sessionStorage.getItem(key) || 0);
+      if (Date.now() - at < 10 * 60000) return;
+      sessionStorage.setItem(key, String(Date.now()));
+    } catch { /* stockage indisponible */ }
+    void (async () => {
+      const h = await Nearby.getHotspot().catch(() => null);
+      if (!h || h.hosting || (h.joined && h.joinedSsid === inv.ssid)) return;
+      const who = users?.find((u) => u.id === inv.userId)?.displayName ?? "Un collègue";
+      toast(`${who} a créé le réseau Wi-Fi de l'atelier`, {
+        description: "Rejoins-le pour des appels et une synchro plus rapides (sans Internet).",
+        duration: 30000,
+        action: {
+          label: "Rejoindre",
+          onClick: async () => {
+            await Nearby.requestNearbyPermissions({ location: true }).catch(() => null);
+            const r = await Nearby.joinHotspot({ ssid: inv.ssid, password: inv.password ?? "", security: inv.security }).catch(() => null);
+            if (!r || r.error) toast.error("Impossible de rejoindre ce réseau. Ouvre « Connexion sans Internet » dans Paramètres.");
+            else toast.success(`Relié au réseau ${inv.ssid}`);
+          },
+        },
+      });
+    })();
+  }), [users]);
+
   // Avec Internet : un collègue m'appelle-t-il en ce moment ?
   useEffect(() => {
     if (!myId || !online) return;
@@ -114,6 +144,7 @@ export const P2PBridge = () => {
         if (p) void onInternetSignal(p);
       })
       .on("broadcast", { event: "dm" }, () => void refreshDms(myId))
+      .on("broadcast", { event: "dm_status" }, () => void refreshDms(myId))
       .subscribe();
     return () => { void realtime.removeChannel(channel); };
   }, [myId, online, topic]);

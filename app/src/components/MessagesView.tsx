@@ -213,7 +213,7 @@ export const MessagesView = ({ state, lang, save, renderGroup, segment, onSegmen
   const unreadTotal = threads.reduce((a, [peer]) => a + unreadFrom(peer, me.id, dms), 0);
   const q = search.trim().toLowerCase();
   const shownThreads = threads.filter(([peerId, last]) => !q || nameOf(peerId).toLowerCase().includes(q) || (last.text ?? "").toLowerCase().includes(q));
-  const tick = (d: Dm) => d.from !== me.id ? null : d.status === "pending" ? <span className={styles.tickWait} aria-label={t("en attente", "waiting")}>🕓</span> : <span className={styles.tick} aria-label={t("envoyé", "sent")}>✓</span>;
+  const tick = (d: Dm) => d.from !== me.id ? null : <Ticks d={d} lang={lang} />;
   return (
     <div className={styles.wrap}>
       <div className={styles.head}>
@@ -507,7 +507,7 @@ const DmThread = ({ state, lang, save, peerId, name, role, presence, onBack, onC
                   : !m.att && <div className={styles.bubbleText}><em>{t("Message chiffré pour un autre téléphone de ce compte.", "Message encrypted for another phone of this account.")}</em></div>}
                 <div className={styles.bubbleMeta}>
                   {m.via === "proche" ? `${t("sans Internet", "offline")} · ` : ""}{hhmm(m.at)}
-                  {mine && (m.status === "pending" ? <span className={styles.tickWait}> 🕓</span> : <span className={styles.tick}> ✓</span>)}
+                  {mine && <Ticks d={m} lang={lang} />}
                 </div>
               </div>
             </React.Fragment>
@@ -640,3 +640,28 @@ const Attachment = ({ dm, lang, onOpenImage, online }: { dm: Dm; lang: "fr" | "e
     </button>
   );
 };
+
+// Accusés façon WhatsApp : horloge = encore sur ce téléphone · ✓ = arrivé au serveur ·
+// ✓✓ = arrivé sur le téléphone du collègue · ✓✓ bleus = lu.
+function Ticks({ d, lang }: { d: Dm; lang: "fr" | "en" }) {
+  const t = (fr: string, en: string) => (lang === "fr" ? fr : en);
+  if (d.status === "pending") {
+    return (
+      <span className={styles.tickWait} role="img" aria-label={t("en attente d'envoi", "waiting to send")}>
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><circle cx="8" cy="8" r="6" /><path d="M8 4.8V8l2.2 1.4" /></svg>
+      </span>
+    );
+  }
+  const read = !!d.readAt;
+  const delivered = read || !!d.deliveredAt;
+  const label = read ? t("lu", "read") : delivered ? t("reçu", "delivered") : t("envoyé", "sent");
+  return (
+    <span className={`${styles.tick} ${read ? styles.tickRead : ""}`} role="img" aria-label={label}>
+      {delivered ? (
+        <svg viewBox="0 0 20 14" width="18" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M1.5 7.5l3.5 3.5L12 3.5" /><path d="M8 11l1 1L17.5 3.5" /></svg>
+      ) : (
+        <svg viewBox="0 0 14 14" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2 7.5l3.5 3.5L12 3.5" /></svg>
+      )}
+    </span>
+  );
+}

@@ -36,7 +36,7 @@ export const session = {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     // Données de l'atelier et file d'attente propres à ce compte.
-    ["g37.state", "g37.outbox", "g37.snap", "g37.secrets", "g37.relay", "g37.dms", "g37.dmRead", "g37.deviceReg", "g37.calls", "g37.share", "g37.manifest"]
+    ["g37.state", "g37.outbox", "g37.snap", "g37.secrets", "g37.relay", "g37.dms", "g37.dmRead", "g37.dmReadSync", "g37.deviceReg", "g37.calls", "g37.share", "g37.manifest"]
       .forEach((k) => localStorage.removeItem(k));
     listeners.forEach((l) => l(null));
   },

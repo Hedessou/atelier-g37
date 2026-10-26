@@ -66,7 +66,7 @@ const ROLES: Record<string, { n: string; p: Perm[]; code?: boolean; tabs?: strin
   genmaint: { n: "Responsable maintenance générale", p: ["maint", "works", "faultReport", "faults", "stock", "forum"] },
   greaser: { n: "Opérateur graissage", p: ["grease", "works", "faultReport", "faults", "stock", "forum"] },
   manager: { n: "Manager", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "forum", "eff", "shifts", "specs"], code: true },
-  forman: { n: "Forman / Boss", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "forum", "eff", "shifts", "specs"], code: true },
+  forman: { n: "Boss", p: ["machine", "gears", "maint", "grease", "works", "faultReport", "faults", "stock", "forum", "eff", "shifts", "specs"], code: true },
   prodsup: { n: "Prod superviseur", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion"] },
   // Mêmes accès que Prod superviseur.
   prodman: { n: "Prod manager", p: ["faultReport"], tabs: ["accueil", "calcul", "pannes", "gears", "discussion"] },

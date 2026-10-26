@@ -51,8 +51,11 @@ import java.util.concurrent.Executors;
  * Pour l'app, les deux se ressemblent : mêmes événements, mêmes envois de messages et de fichiers.
  * Version 4 : le téléphone reste joignable app fermée (annonce permanente, recherche par rafales),
  * affiche lui-même les appels de proximité entrants et les messages / pannes reçus des collègues proches.
+ * Version 5 : liaisons Bluetooth fiables (nouvel essai automatique, plus de collision entre les deux téléphones,
+ * recherche mise en pause pendant la connexion), relance rapide, journal des erreurs, et réseau Wi-Fi
+ * créé par le téléphone lui-même (point d'accès local) avec invitation automatique des collègues.
  */
-public final class NearbyEngine implements LanEngine.Callback {
+public final class NearbyEngine implements LanEngine.Callback, HotspotManager.Listener {
     public interface Listener {
         void onEvent(String name, JSONObject data);
     }
@@ -73,6 +76,7 @@ public final class NearbyEngine implements LanEngine.Callback {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final LocalFileServer fileServer = new LocalFileServer();
     private final LanEngine lan;
+    private final HotspotManager hotspot;
 
     private volatile Listener listener;
     private volatile boolean foreground = false;
@@ -85,6 +89,16 @@ public final class NearbyEngine implements LanEngine.Callback {
     private final Map<String, String> connecting = new ConcurrentHashMap<>();
     private final Map<String, String> connected = new ConcurrentHashMap<>();
     private final Set<String> requested = ConcurrentHashMap.newKeySet();
+    // v5 : suivi des tentatives de liaison Bluetooth (nouvel essai, délais croissants).
+    private final Map<String, Long> firstSeenAt = new ConcurrentHashMap<>();
+    private final Map<String, Long> requestedAt = new ConcurrentHashMap<>();
+    private final Map<String, Integer> attempts = new ConcurrentHashMap<>();
+    private final Map<String, Long> nextTryAt = new ConcurrentHashMap<>();
+    private final java.util.ArrayDeque<JSONObject> errors = new java.util.ArrayDeque<>();
+    private long discoveryStartedAt = 0;
+    private long lastFoundAt = 0;
+    private boolean discoveryPaused = false;
+    private boolean watchdogOn = false;
     private final Map<Long, JSONObject> fileMeta = new ConcurrentHashMap<>();
     private final Map<Long, Payload> incoming = new ConcurrentHashMap<>();
     private final Map<Long, String> incomingFrom = new ConcurrentHashMap<>();
@@ -99,6 +113,7 @@ public final class NearbyEngine implements LanEngine.Callback {
         client = Nearby.getConnectionsClient(context);
         localName = prefs().getString("name", null);
         lan = new LanEngine(context, this, new File(baseDir(), "lan-tmp"));
+        hotspot = new HotspotManager(context, this);
     }
 
     SharedPreferences prefs() {
@@ -236,8 +251,29 @@ public final class NearbyEngine implements LanEngine.Callback {
         for (Map.Entry<String, String> e : lan.foundPeers().entrySet()) {
             if (!lanConnected.containsKey(e.getKey())) peers.put(obj("endpointId", e.getKey(), "name", e.getValue(), "connected", false, "medium", "wifi"));
         }
-        return obj("running", advertising || discovering || lan.isRunning(), "advertising", advertising, "discovering", discovering,
-                "wifiLan", lan.isRunning(), "name", localName, "peers", peers, "sdk", Build.VERSION.SDK_INT, "always", alwaysReachable());
+        JSONArray errs = new JSONArray();
+        synchronized (errors) {
+            for (JSONObject e : errors) errs.put(e);
+        }
+        return obj("running", advertising || discovering || lan.isRunning(), "advertising", advertising, "discovering", discovering || discoveryPaused,
+                "wifiLan", lan.isRunning(), "name", localName, "peers", peers, "sdk", Build.VERSION.SDK_INT, "always", alwaysReachable(),
+                "native", 5, "errors", errs, "hotspot", hotspot.state());
+    }
+
+    /** Dernières erreurs (affichées dans le guide de connexion pour comprendre un échec). */
+    private void noteError(String where, Exception e, String endpointId) {
+        noteError(where, statusOf(e), String.valueOf(e.getMessage()), endpointId);
+    }
+
+    private void noteError(String where, int code, String message, String endpointId) {
+        JSONObject o = obj("where", where, "code", code, "message", message, "at", System.currentTimeMillis(),
+                "peer", endpointId == null ? null : nameOf(endpointId));
+        synchronized (errors) {
+            errors.addFirst(o);
+            while (errors.size() > 8) errors.removeLast();
+        }
+        Log.i(TAG, where + " " + code + " " + message);
+        emit("error", o);
     }
 
     // ---------- Recherche et connexions ----------
@@ -256,6 +292,145 @@ public final class NearbyEngine implements LanEngine.Callback {
         startDiscovery();
         discoveryUntil = Long.MAX_VALUE;
         lan.start(localName);
+        startWatchdog();
+    }
+
+    /** Recherche voulue en ce moment (app ouverte, ou rafale du service d'arrière-plan). */
+    private boolean wantDiscovery() {
+        return localName != null && (foreground || System.currentTimeMillis() < discoveryUntil);
+    }
+
+    /**
+     * Relance immédiate (bouton « Relancer la recherche ») : recherche Bluetooth repartie de zéro,
+     * annonce Wi-Fi, et nouvel essai tout de suite vers chaque collègue déjà repéré.
+     */
+    synchronized void quickConnect(String name) {
+        setName(name);
+        if (localName == null) return;
+        attempts.clear();
+        nextTryAt.clear();
+        long now = System.currentTimeMillis();
+        for (Map.Entry<String, Long> e : requestedAt.entrySet()) {
+            if (now - e.getValue() > 20000) {
+                requested.remove(e.getKey());
+                requestedAt.remove(e.getKey());
+            }
+        }
+        if (discoveryUntil < now + 120000) discoveryUntil = foreground ? Long.MAX_VALUE : now + 120000;
+        startAdvertising();
+        restartDiscovery();
+        lan.start(localName);
+        lan.announceNow();
+        startWatchdog();
+        for (String id : found.keySet()) {
+            firstSeenAt.put(id, now - 60000); // l'autre téléphone n'a rien fait : on appelle nous-mêmes
+            maybeConnect(id);
+        }
+    }
+
+    private synchronized void restartDiscovery() {
+        try {
+            client.stopDiscovery();
+        } catch (Exception ignored) {
+        }
+        discovering = false;
+        discoveryPaused = false;
+        startDiscovery();
+    }
+
+    /** Surveillance toutes les 4 s : nouveaux essais, reprise de la recherche, recherche bloquée relancée. */
+    private void startWatchdog() {
+        if (watchdogOn) return;
+        watchdogOn = true;
+        main.postDelayed(watchdog, 4000);
+    }
+
+    private final Runnable watchdog = new Runnable() {
+        @Override
+        public void run() {
+            long now = System.currentTimeMillis();
+            // Hors recherche (app fermée entre deux rafales) : rien à surveiller, la prochaine rafale relancera.
+            boolean active = wantDiscovery() || !requestedAt.isEmpty() || discoveryPaused;
+            if (!active || localName == null) {
+                watchdogOn = false;
+                return;
+            }
+            try {
+                // Demande restée sans réponse : on la considère perdue.
+                for (Map.Entry<String, Long> e : requestedAt.entrySet()) {
+                    if (now - e.getValue() > 35000 && !connecting.containsKey(e.getKey()) && !connected.containsKey(e.getKey())) {
+                        requested.remove(e.getKey());
+                        requestedAt.remove(e.getKey());
+                        backoff(e.getKey());
+                        noteError("connect", -2, "Pas de réponse", e.getKey());
+                    }
+                }
+                if (discoveryPaused && (requestedAt.isEmpty() || now - newestRequest() > 15000)) resumeDiscovery();
+                if (wantDiscovery()) for (String id : found.keySet()) maybeConnect(id);
+                // Recherche lancée depuis longtemps sans rien trouver : certains téléphones la bloquent, on la relance.
+                if (wantDiscovery() && discovering && !discoveryPaused && connected.isEmpty() && requestedAt.isEmpty()
+                        && now - discoveryStartedAt > 90000 && now - lastFoundAt > 90000) {
+                    restartDiscovery();
+                } else if (wantDiscovery() && !discovering && !discoveryPaused) {
+                    startDiscovery();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Surveillance", e);
+            }
+            main.postDelayed(this, 4000);
+        }
+    };
+
+    private long newestRequest() {
+        long n = 0;
+        for (Long v : requestedAt.values()) n = Math.max(n, v);
+        return n;
+    }
+
+    /** Délai avant le prochain essai : 3 s, 6 s, 12 s… jusqu'à 45 s (avec un peu de hasard pour éviter les collisions). */
+    private void backoff(String endpointId) {
+        int n = attempts.containsKey(endpointId) ? attempts.get(endpointId) + 1 : 1;
+        attempts.put(endpointId, n);
+        long delay = Math.min(45000L, 3000L << Math.min(n - 1, 4));
+        delay += (long) (Math.random() * 1500);
+        nextTryAt.put(endpointId, System.currentTimeMillis() + delay);
+    }
+
+    /**
+     * Faut-il demander la liaison maintenant ? Le téléphone au plus petit nom appelle ;
+     * l'autre attend 20 s (une liaison Bluetooth peut prendre plus de 10 s) avant d'appeler à son tour.
+     */
+    private void maybeConnect(String endpointId) {
+        if (localName == null) return;
+        String name = found.get(endpointId);
+        if (name == null || connected.containsKey(endpointId) || connecting.containsKey(endpointId) || requested.contains(endpointId)) return;
+        if (linkedByWifi(name)) return; // déjà relié par le Wi-Fi local : inutile
+        long now = System.currentTimeMillis();
+        Long next = nextTryAt.get(endpointId);
+        if (next != null && now < next) return;
+        boolean caller = localName.compareTo(name) < 0;
+        if (!caller) {
+            Long first = firstSeenAt.get(endpointId);
+            if (first == null || now - first < 20000) return;
+        }
+        request(endpointId);
+    }
+
+    /** Pendant qu'une liaison Bluetooth s'établit, la recherche est suspendue (elle la perturbe beaucoup). */
+    private synchronized void pauseDiscovery() {
+        if (!discovering) return;
+        try {
+            client.stopDiscovery();
+        } catch (Exception ignored) {
+        }
+        discovering = false;
+        discoveryPaused = true;
+    }
+
+    private synchronized void resumeDiscovery() {
+        if (!discoveryPaused) return;
+        discoveryPaused = false;
+        if (wantDiscovery()) startDiscovery();
     }
 
     /** App fermée, mode « toujours joignable » : on reste visible (annonce) et à l'écoute du Wi-Fi local. */
@@ -273,7 +448,7 @@ public final class NearbyEngine implements LanEngine.Callback {
                 .addOnFailureListener(e -> {
                     if (statusOf(e) != ConnectionsStatusCodes.STATUS_ALREADY_ADVERTISING) {
                         advertising = false;
-                        emit("error", obj("where", "advertise", "message", String.valueOf(e.getMessage())));
+                        noteError("advertise", e, null);
                     }
                 });
     }
@@ -281,12 +456,13 @@ public final class NearbyEngine implements LanEngine.Callback {
     private void startDiscovery() {
         if (discovering) return;
         discovering = true;
+        discoveryStartedAt = System.currentTimeMillis();
         client.startDiscovery(SERVICE_ID, discovery,
                 new DiscoveryOptions.Builder().setStrategy(Strategy.P2P_CLUSTER).build())
                 .addOnFailureListener(e -> {
                     if (statusOf(e) != ConnectionsStatusCodes.STATUS_ALREADY_DISCOVERING) {
                         discovering = false;
-                        emit("error", obj("where", "discover", "message", String.valueOf(e.getMessage())));
+                        noteError("discover", e, null);
                     }
                 });
     }
@@ -310,10 +486,15 @@ public final class NearbyEngine implements LanEngine.Callback {
         lan.stop();
         advertising = false;
         discovering = false;
+        discoveryPaused = false;
         found.clear();
         connecting.clear();
         connected.clear();
         requested.clear();
+        requestedAt.clear();
+        firstSeenAt.clear();
+        attempts.clear();
+        nextTryAt.clear();
     }
 
     /** Recherche courte lancée par le service d'arrière-plan. */
@@ -326,9 +507,11 @@ public final class NearbyEngine implements LanEngine.Callback {
             lan.start(localName);
             lan.announceNow();
             discoveryUntil = System.currentTimeMillis() + durationMs;
+            startWatchdog();
         }
         main.postDelayed(() -> {
             if (foreground || System.currentTimeMillis() < discoveryUntil) return;
+            discoveryPaused = false;
             if (alwaysReachable()) stopDiscovery(); // on reste joignable, seule la recherche s'arrête
             else stop();
         }, durationMs + 500);
@@ -340,14 +523,26 @@ public final class NearbyEngine implements LanEngine.Callback {
 
     private void request(final String endpointId) {
         if (localName == null) return;
-        requested.add(endpointId);
-        client.requestConnection(localName, endpointId, lifecycle)
-                .addOnFailureListener(e -> {
-                    requested.remove(endpointId);
-                    if (statusOf(e) != ConnectionsStatusCodes.STATUS_ALREADY_CONNECTED_TO_ENDPOINT) {
-                        Log.i(TAG, "Connexion refusée : " + e.getMessage());
-                    }
-                });
+        if (!requested.add(endpointId)) return;
+        requestedAt.put(endpointId, System.currentTimeMillis());
+        pauseDiscovery();
+        try {
+            client.requestConnection(localName, endpointId, lifecycle)
+                    .addOnFailureListener(e -> {
+                        requested.remove(endpointId);
+                        requestedAt.remove(endpointId);
+                        if (statusOf(e) == ConnectionsStatusCodes.STATUS_ALREADY_CONNECTED_TO_ENDPOINT) return;
+                        backoff(endpointId);
+                        noteError("connect", e, endpointId);
+                        if (requestedAt.isEmpty()) main.postDelayed(this::resumeDiscovery, 800);
+                    });
+        } catch (Exception e) {
+            requested.remove(endpointId);
+            requestedAt.remove(endpointId);
+            backoff(endpointId);
+            noteError("connect", e, endpointId);
+            resumeDiscovery();
+        }
     }
 
     /** Déjà relié à ce collègue par le Wi-Fi local : inutile d'ouvrir aussi une liaison Bluetooth. */
@@ -359,25 +554,22 @@ public final class NearbyEngine implements LanEngine.Callback {
         @Override
         public void onEndpointFound(final String endpointId, DiscoveredEndpointInfo info) {
             String name = info.getEndpointName();
+            if (name == null || !name.startsWith("G37:")) return;
             found.put(endpointId, name);
+            lastFoundAt = System.currentTimeMillis();
+            if (!firstSeenAt.containsKey(endpointId)) firstSeenAt.put(endpointId, lastFoundAt);
             emit("peerFound", obj("endpointId", endpointId, "name", name, "medium", "nearby"));
-            if (connected.containsKey(endpointId) || requested.contains(endpointId) || connecting.containsKey(endpointId)) return;
-            // Un seul des deux téléphones demande la connexion (l'autre réessaie s'il ne se passe rien).
-            if (localName != null && localName.compareTo(name) < 0) {
-                request(endpointId);
-            } else {
-                main.postDelayed(() -> {
-                    if (found.containsKey(endpointId) && !connected.containsKey(endpointId)
-                            && !requested.contains(endpointId) && !connecting.containsKey(endpointId)) {
-                        request(endpointId);
-                    }
-                }, 8000);
-            }
+            // Un seul des deux téléphones demande la liaison ; l'autre prend le relais au bout de 20 s (surveillance).
+            maybeConnect(endpointId);
+            startWatchdog();
         }
 
         @Override
         public void onEndpointLost(String endpointId) {
             found.remove(endpointId);
+            firstSeenAt.remove(endpointId);
+            attempts.remove(endpointId);
+            nextTryAt.remove(endpointId);
             emit("peerLost", obj("endpointId", endpointId));
         }
     };
@@ -385,16 +577,31 @@ public final class NearbyEngine implements LanEngine.Callback {
     private final ConnectionLifecycleCallback lifecycle = new ConnectionLifecycleCallback() {
         @Override
         public void onConnectionInitiated(String endpointId, ConnectionInfo info) {
-            connecting.put(endpointId, info.getEndpointName());
+            String name = info.getEndpointName();
+            if (name == null || !name.startsWith("G37:")) {
+                client.rejectConnection(endpointId);
+                return;
+            }
+            connecting.put(endpointId, name);
             // Acceptation automatique : le contenu est de toute façon chiffré et signé par l'app.
-            client.acceptConnection(endpointId, payloads);
+            client.acceptConnection(endpointId, payloads).addOnFailureListener(e -> noteError("accept", e, endpointId));
         }
 
         @Override
         public void onConnectionResult(final String endpointId, ConnectionResolution result) {
             String name = connecting.remove(endpointId);
             requested.remove(endpointId);
-            if (!result.getStatus().isSuccess()) return;
+            requestedAt.remove(endpointId);
+            if (requestedAt.isEmpty()) main.postDelayed(NearbyEngine.this::resumeDiscovery, 800);
+            if (!result.getStatus().isSuccess()) {
+                backoff(endpointId);
+                int code = result.getStatus().getStatusCode();
+                String msg = result.getStatus().getStatusMessage();
+                noteError("connect", code, msg == null ? "" : msg, endpointId);
+                return;
+            }
+            attempts.remove(endpointId);
+            nextTryAt.remove(endpointId);
             if (name == null) name = found.containsKey(endpointId) ? found.get(endpointId) : "";
             connected.put(endpointId, name);
             emit("connected", obj("endpointId", endpointId, "name", name, "medium", "nearby"));
@@ -403,6 +610,8 @@ public final class NearbyEngine implements LanEngine.Callback {
                 sendPacket(endpointId);
                 sendHints(endpointId);
             }
+            // Réseau Wi-Fi créé par ce téléphone : on invite le collègue à le rejoindre.
+            sendHotspotInvite(endpointId);
             if (!foreground && !alwaysReachable()) {
                 // En arrière-plan sans « toujours joignable » : on échange les données puis on libère la liaison.
                 main.postDelayed(() -> {
@@ -418,7 +627,11 @@ public final class NearbyEngine implements LanEngine.Callback {
         public void onDisconnected(String endpointId) {
             connected.remove(endpointId);
             requested.remove(endpointId);
+            requestedAt.remove(endpointId);
+            // Toujours à portée : nouvel essai rapide (la surveillance s'en charge).
+            nextTryAt.put(endpointId, System.currentTimeMillis() + 2000);
             emit("disconnected", obj("endpointId", endpointId));
+            startWatchdog();
         }
     };
 
@@ -786,6 +999,34 @@ public final class NearbyEngine implements LanEngine.Callback {
 
     String serveFile(String relative, String name) throws Exception {
         return fileServer.serve(resolve(relative), name);
+    }
+
+    // ---------- Réseau Wi-Fi créé par le téléphone (v5) ----------
+    HotspotManager hotspot() {
+        return hotspot;
+    }
+
+    @Override
+    public void onHotspotChanged(JSONObject state) {
+        emit("hotspot", state);
+        if (state.optBoolean("hosting")) {
+            for (String id : connected.keySet()) sendHotspotInvite(id);
+        }
+        // Nouveau réseau (créé ou rejoint) : on s'annonce tout de suite sur ce Wi-Fi.
+        lan.announceNow();
+    }
+
+    /** Invitation envoyée par Bluetooth : nom et mot de passe du réseau que ce téléphone a créé. */
+    void sendHotspotInvite(String endpointId) {
+        JSONObject inv = hotspot.invite();
+        if (inv == null || LanEngine.isLan(endpointId)) return;
+        try {
+            inv.put("t", "hotspot");
+            inv.put("from", myUserId());
+            sendMessage(endpointId, inv.toString());
+        } catch (Exception e) {
+            Log.w(TAG, "Invitation non envoyée", e);
+        }
     }
 
     // ---------- Appels de proximité (Bluetooth / Wi-Fi direct) ----------

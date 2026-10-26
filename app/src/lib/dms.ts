@@ -38,6 +38,9 @@ export type Dm = {
   text: string | null;
   // pending : encore sur ce téléphone · sent : arrivé au serveur · received : reçu · unreadable : chiffré pour un autre téléphone
   status: "pending" | "sent" | "received" | "unreadable";
+  // Messages que j'ai envoyés : arrivé sur le téléphone du collègue (✓✓) et lu (✓✓ bleus).
+  deliveredAt?: string | null;
+  readAt?: string | null;
   via?: "proche";
   att?: DmAttachment;
   reply?: DmReply;
@@ -114,6 +117,7 @@ async function upsert(items: Dm[]) {
 export function clearDms() {
   localStorage.removeItem(STORE_KEY);
   localStorage.removeItem(READ_KEY);
+  localStorage.removeItem("g37.dmReadSync");
   localStorage.removeItem(HIDDEN_KEY);
   emit();
 }
@@ -274,7 +278,7 @@ export function refreshDms(myId: number): Promise<void> {
   if (refreshing) return refreshing;
   refreshing = (async () => {
     if (!isOnline()) return;
-    let list: Array<{ id: string; from: number; to: number; envelope: DmEnvelope; createdAt: string }>;
+    let list: Array<{ id: string; from: number; to: number; envelope: DmEnvelope; createdAt: string; deliveredAt?: string | null; readAt?: string | null }>;
     try {
       const res = await fetch("/_api/g37/dms");
       if (!res.ok) return;
@@ -286,16 +290,23 @@ export function refreshDms(myId: number): Promise<void> {
     const items: Dm[] = [];
     for (const m of list) {
       const prev = known.get(m.id);
-      if (prev && prev.text != null && prev.status !== "pending") continue;
+      const receipts = m.from === myId ? { deliveredAt: m.deliveredAt ?? null, readAt: m.readAt ?? null } : {};
+      if (prev && prev.text != null && prev.status !== "pending") {
+        // Déjà connu : seuls les accusés de réception / lecture changent.
+        if (m.from === myId && (prev.deliveredAt !== receipts.deliveredAt || prev.readAt !== receipts.readAt)) items.push({ ...prev, ...receipts });
+        continue;
+      }
       const plain = prev?.text != null ? null : await openDm<Plain>(m.envelope);
       const text = prev?.text ?? plain?.text ?? null;
       items.push({
         id: m.id, from: m.from, to: m.to, at: m.createdAt, text,
         status: m.from === myId ? "sent" : text != null ? "received" : "unreadable",
+        ...receipts,
         ...(plain?.att ? { att: plain.att } : {}), ...(plain?.reply ? { reply: plain.reply } : {}),
       });
     }
     await upsert(items);
+    await syncReads();
   })().finally(() => { refreshing = null; });
   return refreshing;
 }
@@ -325,9 +336,44 @@ function readMap(): Record<string, string> {
 }
 export function markRead(peerId: number) {
   const m = readMap();
-  m[String(peerId)] = new Date().toISOString();
+  const now = new Date().toISOString();
+  const already = m[String(peerId)] ?? "";
+  m[String(peerId)] = now;
   localStorage.setItem(READ_KEY, JSON.stringify(m));
   emit();
+  // Prévenir l'expéditeur (deux traits bleus) s'il y avait des messages non lus de lui.
+  const hasNew = load().some((d) => d.from === peerId && d.at > already);
+  if (hasNew) {
+    const pend = readSyncMap();
+    pend[String(peerId)] = now;
+    try { localStorage.setItem(READ_SYNC_KEY, JSON.stringify(pend)); } catch { /* plein */ }
+    void syncReads();
+  }
+}
+
+// Lectures à signaler au serveur (gardées si pas d'Internet, envoyées au retour du réseau).
+const READ_SYNC_KEY = "g37.dmReadSync";
+function readSyncMap(): Record<string, string> {
+  try { return JSON.parse(localStorage.getItem(READ_SYNC_KEY) ?? "{}"); } catch { return {}; }
+}
+let readsSyncing = false;
+export async function syncReads(): Promise<void> {
+  if (readsSyncing || !isOnline()) return;
+  readsSyncing = true;
+  try {
+    for (const [peer, until] of Object.entries(readSyncMap())) {
+      const res = await fetch("/_api/g37/dm_read", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ peer: Number(peer), until }) }).catch(() => null);
+      if (!res) break;
+      // 404 : serveur encore à l'ancienne version, on réessaiera plus tard.
+      if (res.ok || res.status === 400) {
+        const pend = readSyncMap();
+        if (pend[peer] === until) delete pend[peer];
+        try { localStorage.setItem(READ_SYNC_KEY, JSON.stringify(pend)); } catch { /* plein */ }
+      }
+    }
+  } finally {
+    readsSyncing = false;
+  }
 }
 export function unreadFrom(peerId: number, myId: number, list = allDms()): number {
   const since = readMap()[String(peerId)] ?? "";

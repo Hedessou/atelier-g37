@@ -7,6 +7,8 @@ import { sj } from "../lib/http.ts";
 import superjson from "superjson";
 import { sql } from "../lib/db.ts";
 import { serverSign } from "../lib/p2pKeys.ts";
+import { teamOnDuty } from "../lib/duty.ts";
+import { escalateOpenFaults } from "../lib/notify.ts";
 
 function noFromId(id: string): number { const digits = id.replace(/\D/g, ""); return digits ? parseInt(digits, 10) : 0; }
 
@@ -22,9 +24,9 @@ export async function handleState(request: Request): Promise<Response> {
       db.selectFrom("users").select(["id", "email", "displayName", "role", "jobRole", "team", "pending", "lastSeen", "firstName", "lastName", "postTitle", "avatarUrl"]).orderBy("displayName", "asc").execute(),
       db.selectFrom("machines").select(["id", "name", "machineNo", "groupId", "status", "runG", "runH", "runCount", "stopReason", "stoppedSince", "lastMaintenance", "nextMaintenance"]).execute(),
       db.selectFrom("gears").select(["gearType", "teeth", "stock"]).orderBy("gearType", "asc").orderBy("teeth", "asc").execute(),
-      db.selectFrom("stockItems").select(["id", "name", "category", "unit", "quantity", "minimumQuantity"]).orderBy("category", "asc").orderBy("name", "asc").execute(),
+      db.selectFrom("stockItems").select(["id", "name", "category", "unit", "quantity", "minimumQuantity", "unitPrice", "leadDays"]).orderBy("category", "asc").orderBy("name", "asc").execute(),
       db.selectFrom("works").select(["id", "machineNo", "title", "status", "auto", "authorName", "doneByName", "createdAt"]).orderBy("createdAt", "desc").limit(400).execute(),
-      db.selectFrom("failures").select(["id", "machineId", "issue", "severity", "status", "notes", "technician", "reportedBy", "fixedBy", "openedAt", "resolvedAt", "stoppedAt", "restartedAt"]).orderBy("openedAt", "desc").limit(400).execute(),
+      db.selectFrom("failures").select(["id", "machineId", "issue", "severity", "status", "notes", "technician", "reportedBy", "fixedBy", "openedAt", "resolvedAt", "stoppedAt", "restartedAt"]).orderBy("openedAt", "desc").limit(1500).execute(),
       db.selectFrom("greasingRecords").select(["machineNo", "kind", "pointKey", "doneOn", "authorName"]).orderBy("doneOn", "desc").limit(4000).execute(),
       db.selectFrom("shiftPlan").select(["day", "team", "shiftCode"]).orderBy("day", "asc").execute(),
       db.selectFrom("machineEfficiency").select(["machineNo", "month", "value"]).orderBy("month", "asc").execute(),
@@ -71,6 +73,28 @@ export async function handleState(request: Request): Promise<Response> {
     }
 
     try { await runDueAlerts(machines, greasing, works); } catch (e) { console.error("Alertes d'échéance:", e); }
+    try { await escalateOpenFaults(); } catch (e) { console.error("Relance des pannes:", e); }
+
+    // Magasin : consommation réelle (sorties des 30 et 60 derniers jours) et sorties récentes (coûts, fiche machine).
+    const seesStock = sees("magasin") || sees("machines") || sees("pannes");
+    const [usageRows, outRows, stepRows, checklistRows, duty] = await Promise.all([
+      sql`SELECT item_id, sum(quantity) FILTER (WHERE created_at > now() - interval '30 days') AS u30, sum(quantity) AS u60
+        FROM stock_movements WHERE movement_type = 'sortie' AND created_at > now() - interval '60 days' GROUP BY item_id`,
+      seesStock ? sql`SELECT m.id, m.item_id, i.name, i.unit, m.quantity, m.unit_cost, m.machine_no, m.failure_id, m.author_name, m.reason, m.created_at
+        FROM stock_movements m JOIN stock_items i ON i.id = m.item_id
+        WHERE m.movement_type = 'sortie' AND m.created_at > now() - interval '400 days' ORDER BY m.created_at DESC LIMIT 800` : Promise.resolve([]),
+      sql`SELECT id, position, text FROM checklist_steps ORDER BY position, id`,
+      sees("maintenance") || sees("machines") ? sql`SELECT id, machine_no, maintenance_id, done_at, author_name, items, photo_before, photo_after, notes
+        FROM maint_checklists ORDER BY done_at DESC LIMIT 150` : Promise.resolve([]),
+      teamOnDuty().catch(() => null),
+    ]);
+    const usage = new Map<string, { u30: number; u60: number }>(usageRows.map((r: Row) => [String(r.item_id), { u30: Number(r.u30 ?? 0), u60: Number(r.u60 ?? 0) }]));
+    const photoKeys = checklistRows.flatMap((c: Row) => [c.photo_before, c.photo_after]).filter((k: string | null): k is string => !!k);
+    const photoUrls = new Map<string, string>();
+    if (photoKeys.length) {
+      const { data } = await supa.storage.from(BUCKET_CHAT).createSignedUrls(photoKeys, 86400);
+      (data ?? []).forEach((d) => { if (d.path && d.signedUrl) photoUrls.set(d.path, d.signedUrl); });
+    }
 
     // Pour le mode sans Internet : clés publiques des téléphones (messages privés chiffrés, actions relayées)
     // et actions déjà appliquées par le serveur (les téléphones relais peuvent les oublier).
@@ -92,7 +116,26 @@ export async function handleState(request: Request): Promise<Response> {
         stopReason: m.stopReason ?? null, stoppedSince: m.stoppedSince ?? null, lastMaintenance: m.lastMaintenance ?? null, nextMaintenance: m.nextMaintenance ?? null,
       })).filter((m: Row) => m.no > 0).sort((a: Row, b: Row) => a.no - b.no),
       gears: sees("gears") || sees("calcul") ? gears.map((x: Row) => ({ gearType: x.gearType, teeth: x.teeth, stock: x.stock })) : [],
-      stock: sees("magasin") ? stock.map((s: Row) => ({ id: s.id, name: s.name, category: s.category, unit: s.unit, quantity: String(s.quantity), minimumQuantity: String(s.minimumQuantity) })) : [],
+      stock: sees("magasin") ? stock.map((s: Row) => {
+        const u = usage.get(s.id) ?? { u30: 0, u60: 0 };
+        const perDay = u.u60 / 60;
+        return {
+          id: s.id, name: s.name, category: s.category, unit: s.unit, quantity: String(s.quantity), minimumQuantity: String(s.minimumQuantity),
+          unitPrice: s.unitPrice == null ? null : String(s.unitPrice), leadDays: Number(s.leadDays ?? 14),
+          used30: u.u30, perDay: Math.round(perDay * 1000) / 1000, daysLeft: perDay > 0 ? Math.floor(Number(s.quantity) / perDay) : null,
+        };
+      }) : [],
+      stockOuts: outRows.map((m: Row) => ({
+        id: m.id, itemId: m.item_id, itemName: m.name, unit: m.unit, quantity: Number(m.quantity), unitCost: m.unit_cost == null ? null : Number(m.unit_cost),
+        machineNo: m.machine_no ?? null, failureId: m.failure_id ?? null, authorName: m.author_name ?? null, reason: m.reason ?? null, createdAt: m.created_at,
+      })),
+      checklistSteps: stepRows.map((r: Row) => ({ id: r.id, position: r.position, text: r.text })),
+      checklists: checklistRows.map((c: Row) => ({
+        id: c.id, machineNo: c.machine_no, maintenanceId: c.maintenance_id ?? null, doneAt: c.done_at, authorName: c.author_name ?? null,
+        items: Array.isArray(c.items) ? c.items : [], notes: c.notes ?? null,
+        photoBeforeUrl: c.photo_before ? photoUrls.get(c.photo_before) ?? null : null, photoAfterUrl: c.photo_after ? photoUrls.get(c.photo_after) ?? null : null,
+      })),
+      duty: duty ? { team: duty.team, code: duty.code } : null,
       works: sees("travaux") || sees("machines") ? works.map((w: Row) => ({ ...w, authorName: w.authorName ?? null, doneByName: w.doneByName ?? null })) : [],
       failures: !sees("pannes") && !sees("machines") ? [] : failures.map((f: Row) => ({
         ...f, machineNo: noFromId(f.machineId), notes: f.notes ?? null, technician: f.technician ?? null, reportedBy: f.reportedBy ?? null,

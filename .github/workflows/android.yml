@@ -17,7 +17,7 @@ jobs:
       run:
         working-directory: app
     env:
-      BUNDLE_VERSION: 1.0.${{ github.run_number }}
+      BUNDLE_VERSION: 1.1.${{ github.run_number }}
     steps:
       - uses: actions/checkout@v4
 

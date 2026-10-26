@@ -28,6 +28,11 @@ import { saveBlob } from "../lib/files";
 import { isOnline } from "../lib/net";
 import { extractManualChunks, uploadManualChunks } from "../lib/manualPdf";
 import { pushSupported } from "../helpers/pushClient";
+import { HomeView, type HomeTodo } from "./HomeView";
+import { ChecklistEditor, MaintChecklistDialog } from "./Checklist";
+import { IndicatorsView } from "./IndicatorsView";
+import { MachineHistory } from "./MachineHistory";
+import { StoreView } from "./StoreView";
 import styles from "./G37App.module.css";
 
 const TABS: Array<[string, string, string]> = [
@@ -38,6 +43,7 @@ const TABS: Array<[string, string, string]> = [
 ];
 
 const MONTHS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const MONTHS_FR_SHORT = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
 const MONTHS_EN = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 // Langue courante de l'interface (FR par défaut). Mise à jour par le composant à chaque rendu,
@@ -50,7 +56,7 @@ const MONTHS = () => (LANG === "fr" ? MONTHS_FR : MONTHS_EN);
 const ROLE_EN: Record<string, string> = {
   admin: "Admin", superviseur: "Supervisor", technicien: "Technician", shift: "Shift technician",
   genmaint: "General maintenance manager", greaser: "Greasing operator", manager: "Manager",
-  forman: "Foreman / Boss", prodsup: "Production supervisor", prodman: "Production manager", helper: "Helper",
+  forman: "Boss", prodsup: "Production supervisor", prodman: "Production manager", helper: "Helper",
 };
 const M_STATUS_EN: Record<string, string> = { service: "Running", arret: "Stopped", maintenance: "Under maintenance" };
 const STOP_REASON_EN: Record<string, string> = {
@@ -82,7 +88,7 @@ function fmtDate(v: Date | string | null | undefined) {
   const s = dayISO(v);
   const [y, m, d] = s.split("-");
   return LANG === "fr"
-    ? `${d} ${MONTHS_FR[Number(m) - 1].slice(0, 4)}. ${y}`
+    ? `${d} ${MONTHS_FR_SHORT[Number(m) - 1]} ${y}`
     : `${MONTHS_EN[Number(m) - 1].slice(0, 3)} ${Number(d)}, ${y}`;
 }
 function addDays(isoDay: string, n: number) {
@@ -208,6 +214,9 @@ export const G37App = ({ className }: { className?: string }) => {
     return () => { window.removeEventListener("g37:open-tab", open); window.removeEventListener("g37:open-peer", openPeer); };
   }, []);
   const [openMachine, setOpenMachine] = useState<number | null>(null);
+  // Maintenance en cours de validation (check-list) et modèle de check-list ouvert.
+  const [checklistFor, setChecklistFor] = useState<number | null>(null);
+  const [editChecklist, setEditChecklist] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const { logout } = useAuth();
   // Autorisations importantes manquantes (affiche un rappel sur l'accueil).
@@ -623,116 +632,69 @@ export const G37App = ({ className }: { className?: string }) => {
     </div>
   );
 
+  // ---- Accueil : une seule liste « à faire maintenant », triée par urgence ----
+  const isBoss = me.jobRole === "forman" || me.jobRole === "manager";
+  const homeTodo: HomeTodo[] = (() => {
+    const out: HomeTodo[] = [];
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    openFaults.forEach((f) => {
+      const ms = f.stoppedAt ? Date.now() - new Date(f.stoppedAt).getTime() : Date.now() - new Date(f.openedAt).getTime();
+      out.push({
+        key: `f${f.id}`, group: "fault", kind: t("Panne", "Fault"), tone: "crit", mc: `M/C ${pad2(f.machineNo)}`, what: f.issue,
+        when: f.stoppedAt ? `${t("Arrêtée depuis", "Stopped for")} ${fmtDur(f.stoppedAt, new Date()) ?? t("peu", "a moment")}` : `${t("Signalée il y a", "Reported")} ${fmtDur(f.openedAt, new Date()) ?? t("peu", "a moment")}`,
+        rank: -1e9 + (f.stoppedAt ? -ms : 0),
+        action: { label: t("Voir", "View"), run: () => goto("pannes") },
+      });
+    });
+    maintDue.forEach((m) => {
+      const n = daysTo(dayISO(m.nextMaintenance!));
+      out.push({
+        key: `m${m.no}`, group: "maint", kind: t("Maintenance clg", "Cleaning maintenance"), tone: n < 0 ? "crit" : "warn", mc: `M/C ${pad2(m.no)}`,
+        what: t("Visite périodique", "Periodic visit"), when: dueText(n), rank: n * 10,
+        action: can("maint") ? { label: t("Fait", "Done"), run: () => setChecklistFor(m.no) } : undefined,
+      });
+    });
+    // Graissages : les machines qui se suivent avec le même point et la même échéance sont regroupées (« M/C 21–24 »).
+    const groups = new Map<string, typeof cycleDue>();
+    cycleDue.forEach((c) => { const k = `${c.kind}|${c.key}|${c.days}`; groups.set(k, [...(groups.get(k) ?? []), c]); });
+    groups.forEach((list) => {
+      const sorted = [...list].sort((x, y) => x.no - y.no);
+      let start = 0;
+      for (let i = 1; i <= sorted.length; i++) {
+        if (i < sorted.length && sorted[i].no === sorted[i - 1].no + 1) continue;
+        const run = sorted.slice(start, i);
+        const c = run[0];
+        const from = run[0].no, to = run[run.length - 1].no;
+        const allowed = c.kind === "sched" ? can("works") : can("grease");
+        out.push({
+          key: `c${c.kind}-${c.key}-${from}-${to}`, group: "cycle",
+          kind: c.kind === "grease" ? t("Graissage", "Greasing") : c.kind === "lub" ? t("Lubrification", "Lubrication") : "Schedule works",
+          tone: c.days < 0 ? "crit" : "warn", mc: from === to ? `M/C ${pad2(from)}` : `M/C ${pad2(from)}–${pad2(to)}`, what: c.what, when: dueText(c.days), rank: c.days * 10 + 1,
+          action: allowed ? { label: t("Fait", "Done"), run: () => {
+            if (window.confirm(t(`${c.what} sur ${from === to ? `la M/C ${from}` : `les M/C ${from} à ${to}`} : fait aujourd'hui ?`, `${c.what} on M/C ${from}${from === to ? "" : `–${to}`}: done today?`))) save({ action: "cycle", kind: c.kind, pointKey: c.key, from, to });
+          } } : undefined,
+        });
+        start = i;
+      }
+    });
+    todoWorks.forEach((w) => {
+      const age = -daysTo(dayISO(w.createdAt));
+      out.push({
+        key: `w${w.id}`, group: "work", kind: t("Travail", "Work"), tone: "info", mc: `M/C ${pad2(w.machineNo)}`, what: w.title,
+        when: age > 0 ? t(`Demandé il y a ${age} jour${plural(age)}`, `Requested ${age} day${plural(age)} ago`) : t("Demandé aujourd'hui", "Requested today"),
+        rank: 100 - age,
+        action: can("works") ? { label: t("Fait", "Done"), run: () => { if (window.confirm(t(`Marquer « ${w.title} » comme fait ?`, `Mark "${w.title}" as done?`))) save({ action: "workDone", id: w.id }); } } : undefined,
+      });
+    });
+    return out.sort((x, y) => x.rank - y.rank);
+  })();
+
   const renderAccueil = () => (
-    <div className={styles.stack}>
-      <div className={styles.statusCard}>
-        <div className={styles.statusTop}>
-          <strong>{t("État des métiers", "Machine status")}</strong>
-          <span className={styles.statusTotal}>{machines.length}</span>
-        </div>
-        <div className={styles.statusBar} aria-hidden="true">
-          {running > 0 && <span style={{ flex: running, background: "var(--g-ok)" }} />}
-          {stoppedCount > 0 && <span style={{ flex: stoppedCount, background: "var(--g-crit)" }} />}
-          {maintCount > 0 && <span style={{ flex: maintCount, background: "var(--g-warn)" }} />}
-        </div>
-        <div className={styles.statusLegend}>
-          <div><span className={styles.statusNum} style={{ color: "var(--g-ok)" }}>{running}</span>{t("En service", "Running")}</div>
-          <div><span className={styles.statusNum} style={{ color: "var(--g-crit)" }}>{stoppedCount}</span>{t("À l'arrêt", "Stopped")}</div>
-          <div><span className={styles.statusNum} style={{ color: "var(--g-warn)" }}>{maintCount}</span>{t("Maintenance", "Maintenance")}</div>
-        </div>
-      </div>
-      <div className={styles.tiles}>
-        <button className={`${styles.tile} ${openFaults.length ? styles.tileCrit : styles.tileOk}`} onClick={() => goto("pannes")}>
-          <span className={styles.tileNum}>{openFaults.length}</span><span>{t("Pannes ouvertes", "Open faults")}</span>
-        </button>
-        <button className={`${styles.tile} ${cycleDue.length ? styles.tileWarn : styles.tileOk}`} onClick={() => goto("graissage")}>
-          <span className={styles.tileNum}>{cycleDue.length}</span><span>{t("Graissages dus", "Greasing due")}</span>
-        </button>
-      </div>
-      <div className={styles.quick}>
-        <button className={`${styles.quickBtn} ${styles.quickPrimary}`} onClick={() => goto("pannes")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3l10 18H2L12 3z" /><path d="M12 10v5" /><path d="M12 18h.01" /></svg>
-          {t("Panne", "Fault")}
-        </button>
-        <button className={styles.quickBtn} onClick={() => { setMsgSegment("calls"); goto("discussion"); }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 4h4l2 5-3 2a11 11 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" /></svg>
-          {t("Appeler", "Call")}
-        </button>
-        <button className={styles.quickBtn} onClick={() => { setMsgSegment("chats"); goto("discussion"); }}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" /></svg>
-          Message
-        </button>
-      </div>
-      <div>
-        <h2 className={styles.h2} style={{ margin: "6px 0 8px" }}>{t("À faire aujourd'hui", "To do today")}</h2>
-        <div className={styles.stack} style={{ paddingTop: 0, gap: 8 }}>
-          {todo.length ? todo.map((x) => (
-            <div key={x.key} className={styles.todoRow}>
-              <span className={styles.todoMc}>M/C {String(x.no).padStart(2, "0")}</span>
-              <span className={styles.todoWhat}>{x.what}</span>
-              <span className={styles.todoWhen} style={{ color: whenColor(x.days) }}>{dueText(x.days)}</span>
-            </div>
-          )) : <div className={styles.empty}>{t("Rien d'échu pour l'instant.", "Nothing due for now.")}</div>}
-        </div>
-      </div>
-      <div className={styles.kpis}>
-        {kpi(`${running} / ${machines.length}`, t("Métiers en service", "Machines running"), stopped.length ? "warn" : "ok")}
-        {kpi(openFaults.length, t("Pannes ouvertes", "Open faults"), openFaults.length ? "crit" : "ok")}
-        {kpi(maintDue.length, t("Maintenances dues", "Maintenance due"), maintDue.length ? "warn" : "ok")}
-        {kpi(cycleDue.length, t("Graissages en retard", "Greasing overdue"), cycleDue.length ? "warn" : "ok")}
-        {kpi(downtimeHours.toFixed(1), t("Heures d'arrêt ce mois", "Downtime hours this month"), downtimeHours ? "warn" : "ok")}
-        {kpi(lowStock.length, t("Articles sous le seuil", "Items below threshold"), lowStock.length ? "crit" : "ok")}
-      </div>
-
-      {running > 0 && (
-        <div className={styles.card}>
-          <div className={styles.head}><h2 className={styles.h2}>{t("Machines en marche", "Machines running")}</h2><p className={styles.sub}>{running} {t("sur", "of")} {machines.length}</p></div>
-          <div className={styles.row} style={{ flexWrap: "wrap", gap: 6 }}>
-            {machines.filter((m) => m.status === "service").map((m) => <Pill key={m.no} tone="ok">M/C {m.no}</Pill>)}
-          </div>
-        </div>
-      )}
-
-      <div className={styles.two}>
-        <div className={styles.card}>
-          <div className={styles.head}><h2 className={styles.h2}>{t("Travaux en retard ou à faire", "Overdue or pending work")}</h2><p className={styles.sub}>{todoWorks.length}</p></div>
-          {todoWorks.length ? todoWorks.slice(0, 8).map((w) => (
-            <div key={w.id} className={`${styles.item} ${styles.row} ${styles.between}`}>
-              <div>
-                <strong>{w.title}</strong> <Pill tone="accent">M/C {w.machineNo}</Pill>
-                <div className={styles.meta}>{w.authorName} · {fmtDate(w.createdAt)}{daysTo(dayISO(w.createdAt)) < 0 ? ` · ${t(`En attente depuis ${-daysTo(dayISO(w.createdAt))} j`, `Waiting ${-daysTo(dayISO(w.createdAt))} d`)}` : ""}</div>
-              </div>
-              {can("works") && <Button size="sm" disabled={isSaving} onClick={() => { if (window.confirm(t(`Marquer « ${w.title} » comme fait ?`, `Mark "${w.title}" as done?`))) save({ action: "workDone", id: w.id }); }}>{t("Fait", "Done")}</Button>}
-            </div>
-          )) : <div className={styles.empty}>{t("Aucun travail en attente.", "No pending work.")}</div>}
-        </div>
-        <div className={styles.card}>
-          <div className={styles.head}><h2 className={styles.h2}>{t("Échéances proches", "Upcoming deadlines")}</h2></div>
-          {maintDue.length || cycleDue.length ? (
-            <>
-              {maintDue.slice(0, 5).map((m) => (
-                <div key={`mt${m.no}`} className={`${styles.item} ${styles.row} ${styles.between}`}>
-                  <div><strong>Maintenance</strong> · M/C {m.no}</div>
-                  <div className={styles.row} style={{ gap: 6 }}>
-                    <Pill tone={dueTone(daysTo(dayISO(m.nextMaintenance!)))}>{dueText(daysTo(dayISO(m.nextMaintenance!)))}</Pill>
-                    {can("maint") && <Button size="sm" disabled={isSaving} onClick={() => { if (window.confirm(t(`Maintenance de la M/C ${m.no} faite ?`, `M/C ${m.no} maintenance done?`))) save({ action: "maintDone", machineNo: m.no }); }}>{t("Fait", "Done")}</Button>}
-                  </div>
-                </div>
-              ))}
-              {cycleDue.slice(0, 6).map((c, i) => (
-                <div key={`cy${i}`} className={`${styles.item} ${styles.row} ${styles.between}`}>
-                  <div><strong>{c.kind === "grease" ? t("Graissage", "Greasing") : c.kind === "lub" ? t("Lubrification", "Lubrication") : "Schedule works"}</strong> · M/C {c.no}<div className={styles.meta}>{c.what}</div></div>
-                  <div className={styles.row} style={{ gap: 6 }}>
-                    <Pill tone={dueTone(c.days)}>{dueText(c.days)}</Pill>
-                    {(c.kind === "sched" ? can("works") : can("grease")) && <Button size="sm" disabled={isSaving} onClick={() => { if (window.confirm(t(`${c.what} sur M/C ${c.no} : fait aujourd'hui ?`, `${c.what} on M/C ${c.no}: done today?`))) save({ action: "cycle", kind: c.kind, pointKey: c.key, from: c.no, to: c.no }); }}>{t("Fait", "Done")}</Button>}
-                  </div>
-                </div>
-              ))}
-            </>
-          ) : <div className={styles.empty}>{t("Rien d'échu pour l'instant.", "Nothing due for now.")}</div>}
-        </div>
-      </div>
-    </div>
+    <HomeView state={state} lang={lang} todo={homeTodo} boss={isBoss} canBossView={me.role === "admin" || me.jobRole === "superviseur"}
+      onOpenMachine={(no) => { setTab("machines"); setOpenMachine(no); setQ(""); window.scrollTo(0, 0); }}
+      goto={goto}
+      onCall={() => { setMsgSegment("calls"); goto("discussion"); }}
+      onSeeAllTodo={() => goto(openFaults.length ? "pannes" : "maintenance")} />
   );
 
   /* ---------- Machines ---------- */
@@ -857,12 +819,15 @@ export const G37App = ({ className }: { className?: string }) => {
           )}
         </div>
 
+        <MachineHistory state={state} lang={lang} no={no} />
+
         <div className={styles.two}>
           <div className={styles.card}>
             <span className={styles.eyebrow}>{t("Prochaine maintenance", "Next maintenance")}</span>
             <h2 className={styles.h2} style={{ margin: "4px 0" }}>{m.nextMaintenance ? fmtDate(m.nextMaintenance) : t("non planifiée", "not scheduled")}</h2>
             {m.nextMaintenance && <Pill tone={dueTone(daysTo(dayISO(m.nextMaintenance)))}>{dueText(daysTo(dayISO(m.nextMaintenance)))}</Pill>}
             <div className={styles.meta} style={{ marginTop: 6 }}>{t("Dernière", "Last")} : {fmtDate(m.lastMaintenance)}</div>
+            {can("maint") && <Button style={{ marginTop: 10, alignSelf: "flex-start" }} onClick={() => setChecklistFor(no)}>{t("Maintenance faite", "Maintenance done")}</Button>}
           </div>
           <div className={styles.card}>
             <span className={styles.eyebrow}>{t("Historique graissage", "Greasing history")}</span>
@@ -1198,44 +1163,63 @@ export const G37App = ({ className }: { className?: string }) => {
     }
   };
 
-  const renderMaintenance = () => (
-    <div className={styles.stack}>
-      <div className={styles.head}>
-        <div><h1 className={styles.title}>Maintenance</h1><p className={styles.sub}>{t("Planning des", "Schedule of the")} {machines.length} {t("métiers", "machines")}</p></div>
-        <Button variant="outline" disabled={pdfBusy} onClick={generateMaintenancePdf}>{pdfBusy ? t("Génération…", "Generating…") : t("📄 Rapport PDF", "📄 PDF report")}</Button>
-      </div>
-      {!can("maint") && <div className={styles.note}>{t("Lecture seule. Seuls l'admin, le superviseur, le technicien et le responsable maintenance modifient ce planning.", "Read only. Only the admin, supervisor, technician and maintenance manager can edit this schedule.")}</div>}
-      <div className={styles.card}>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead><tr><th>Machine</th><th>{t("Dernière", "Last")}</th><th>{t("Prochaine", "Next")}</th><th>{t("Échéance", "Due")}</th>{can("maint") && <th>Action</th>}</tr></thead>
-            <tbody>
-              {machines.map((m) => {
-                const n = m.nextMaintenance ? daysTo(dayISO(m.nextMaintenance)) : null;
-                return (
-                  <tr key={m.no}>
-                    <td className={styles.num}><strong>M/C {m.no}</strong></td>
-                    <td className={styles.num}>{fmtDate(m.lastMaintenance)}</td>
-                    <td className={styles.num}>{fmtDate(m.nextMaintenance)}</td>
-                    <td>{n == null ? <Pill>{t("à planifier", "to schedule")}</Pill> : <Pill tone={dueTone(n)}>{dueText(n)}</Pill>}</td>
-                    {can("maint") && (
-                      <td>
-                        <div className={styles.row} style={{ gap: 4 }}>
-                          <Input type="date" value={d(`mt.${m.no}`, m.nextMaintenance ? dayISO(m.nextMaintenance) : "")}
-                            onChange={(e) => { setD(`mt.${m.no}`, e.target.value); save({ action: "maintPlan", machineNo: m.no, next: e.target.value ? new Date(e.target.value + "T00:00:00Z") : null }); }} />
-                          <Button size="sm" variant="outline" disabled={isSaving} onClick={() => save({ action: "maintDone", machineNo: m.no })}>{t("Faite", "Done")}</Button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+  const renderMaintenance = () => {
+    // Dernière check-list de chaque métier (affichée à côté de la dernière visite).
+    const lastList = new Map<number, { done: number; total: number }>();
+    (state.checklists ?? []).forEach((c) => {
+      if (!lastList.has(c.machineNo)) lastList.set(c.machineNo, { done: c.items.filter((i) => i.done).length, total: c.items.length });
+    });
+    const sorted = [...machines].sort((x, y) => {
+      const nx = x.nextMaintenance ? daysTo(dayISO(x.nextMaintenance)) : 9999;
+      const ny = y.nextMaintenance ? daysTo(dayISO(y.nextMaintenance)) : 9999;
+      return nx - ny || x.no - y.no;
+    });
+    const late = machines.filter((m) => m.nextMaintenance && daysTo(dayISO(m.nextMaintenance)) < 0).length;
+    const soon = machines.filter((m) => { const n = m.nextMaintenance ? daysTo(dayISO(m.nextMaintenance)) : null; return n != null && n >= 0 && n <= 7; }).length;
+    return (
+      <div className={styles.stack}>
+        <div className={`${styles.head} ${styles.between}`} style={{ alignItems: "center" }}>
+          <div><h1 className={styles.title}>Maintenance</h1><p className={styles.sub}>{t("Visites périodiques (clg) des", "Periodic visits (clg) of the")} {machines.length} {t("métiers", "machines")}</p></div>
+          <div className={styles.row} style={{ gap: 6 }}>
+            {can("specs") && <Button variant="outline" onClick={() => setEditChecklist((v) => !v)}>{editChecklist ? t("Fermer la check-list", "Close checklist") : t("Check-list", "Checklist")}</Button>}
+            <Button variant="outline" disabled={pdfBusy} onClick={generateMaintenancePdf}>{pdfBusy ? t("Génération…", "Generating…") : t("Rapport PDF", "PDF report")}</Button>
+          </div>
+        </div>
+        {editChecklist && can("specs") && <ChecklistEditor state={state} lang={lang} save={save} onClose={() => setEditChecklist(false)} />}
+        <div className={styles.kpis}>
+          {kpi(late, t("En retard", "Overdue"), late ? "crit" : "ok")}
+          {kpi(soon, t("Dans les 7 jours", "Within 7 days"), soon ? "warn" : "ok")}
+          {kpi((state.checklistSteps ?? []).length, t("Étapes de la check-list", "Checklist steps"))}
+        </div>
+        {!can("maint") && <div className={styles.note}>{t("Lecture seule. Seuls l'admin, le superviseur, le technicien et le responsable maintenance modifient ce planning.", "Read only. Only the admin, supervisor, technician and maintenance manager can edit this schedule.")}</div>}
+        <div className={styles.listCard}>
+          {sorted.map((m) => {
+            const n = m.nextMaintenance ? daysTo(dayISO(m.nextMaintenance)) : null;
+            const cl = lastList.get(m.no);
+            return (
+              <div key={m.no} className={styles.listRow}>
+                <button type="button" className={styles.listMc} onClick={() => { setTab("machines"); setOpenMachine(m.no); window.scrollTo(0, 0); }}>M/C {String(m.no).padStart(2, "0")}</button>
+                <div className={styles.listMain}>
+                  <div>{n == null ? <Pill>{t("à planifier", "to schedule")}</Pill> : <Pill tone={dueTone(n)}>{dueText(n)}</Pill>}</div>
+                  <div className={styles.meta}>
+                    {t("Dernière", "Last")} : {fmtDate(m.lastMaintenance)}{cl ? ` · ${t("check-list", "checklist")} ${cl.done}/${cl.total}` : ""}
+                  </div>
+                </div>
+                {can("maint") && (
+                  <div className={styles.listActions}>
+                    <Input type="date" aria-label={t(`Prochaine visite de la M/C ${m.no}`, `Next visit of M/C ${m.no}`)} className={styles.dateInput}
+                      value={d(`mt.${m.no}`, m.nextMaintenance ? dayISO(m.nextMaintenance) : "")}
+                      onChange={(e) => { setD(`mt.${m.no}`, e.target.value); save({ action: "maintPlan", machineNo: m.no, next: e.target.value ? new Date(e.target.value + "T00:00:00Z") : null }); }} />
+                    <Button size="sm" onClick={() => setChecklistFor(m.no)}>{t("Faite", "Done")}</Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   /* ---------- Graissage / Lubrification ---------- */
   const renderCycle = (kind: "grease" | "lub" | "sched") => {
@@ -1372,15 +1356,59 @@ export const G37App = ({ className }: { className?: string }) => {
               : <Pill tone="crit">{t("arrêtée depuis", "stopped for")} {fmtDur(f.stoppedAt, new Date()) ?? t("peu", "a moment")}</Pill>}
           </div>
         )}
-        {f.status !== "resolue" && can("faults") && (
-          <div className={styles.row} style={{ marginTop: 6 }}>
-            <Input placeholder={t("Ce qui a été fait", "What was done")} value={d(`fx.${f.id}`)} onChange={(e) => setD(`fx.${f.id}`, e.target.value)} />
-            <Button size="sm" disabled={isSaving} onClick={() => save({
-              action: "faultFix", id: f.id, fix: d(`fx.${f.id}`).trim() || null,
-              restartedAt: f.stoppedAt ? new Date() : null,
-            })}>{t("Marquer réglée", "Mark as fixed")}</Button>
-          </div>
-        )}
+        {f.status !== "resolue" && can("faults") && (() => {
+          // Pièces utilisées pour la réparation : sorties du magasin liées à la panne (facultatif).
+          const parts: Array<{ itemId: string; quantity: number }> = (() => { try { return JSON.parse(d(`fp.${f.id}`, "[]")); } catch { return []; } })();
+          const setParts = (list: Array<{ itemId: string; quantity: number }>) => setD(`fp.${f.id}`, JSON.stringify(list));
+          const stockList = state.stock ?? [];
+          const pick = d(`fpi.${f.id}`, "__none");
+          return (
+            <div className={styles.fixBox}>
+              <Input placeholder={t("Ce qui a été fait", "What was done")} value={d(`fx.${f.id}`)} onChange={(e) => setD(`fx.${f.id}`, e.target.value)} />
+              {can("stock") && stockList.length > 0 && (
+                <>
+                  <div className={styles.row} style={{ gap: 6 }}>
+                    <div style={{ flex: "1 1 180px", minWidth: 0 }}>
+                      <Select value={pick} onValueChange={(v) => setD(`fpi.${f.id}`, v)}>
+                        <SelectTrigger aria-label={t("Pièce utilisée", "Part used")}><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none">{t("Pièce utilisée (facultatif)", "Part used (optional)")}</SelectItem>
+                          {stockList.map((it) => <SelectItem key={it.id} value={it.id}>{it.name} ({Number(it.quantity)} {it.unit})</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Input className={styles.qtyInput} inputMode="decimal" aria-label={t("Quantité", "Quantity")} value={d(`fpq.${f.id}`, "1")} onChange={(e) => setD(`fpq.${f.id}`, e.target.value)} />
+                    <Button size="sm" variant="outline" disabled={pick === "__none"} onClick={() => {
+                      const q = Number(d(`fpq.${f.id}`, "1").replace(",", "."));
+                      if (!(q > 0) || pick === "__none") return;
+                      setParts([...parts.filter((x) => x.itemId !== pick), { itemId: pick, quantity: q }].slice(0, 10));
+                      setD(`fpi.${f.id}`, "__none"); setD(`fpq.${f.id}`, "1");
+                    }}>{t("Ajouter", "Add")}</Button>
+                  </div>
+                  {parts.length > 0 && (
+                    <div className={styles.row} style={{ gap: 6 }}>
+                      {parts.map((x) => {
+                        const it = stockList.find((y) => y.id === x.itemId);
+                        return (
+                          <button key={x.itemId} type="button" className={styles.partChip} onClick={() => setParts(parts.filter((y) => y.itemId !== x.itemId))} aria-label={t("Retirer", "Remove")}>
+                            {it?.name ?? "?"} × {x.quantity} <span aria-hidden="true">×</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              )}
+              <Button disabled={isSaving} onClick={() => {
+                save({
+                  action: "faultFix", id: f.id, fix: d(`fx.${f.id}`).trim() || null,
+                  restartedAt: f.stoppedAt ? new Date() : null, ...(parts.length ? { parts } : {}),
+                });
+                setD(`fp.${f.id}`, "[]");
+              }}>{t("Marquer réglée", "Mark as fixed")}{parts.length ? ` · ${parts.length} ${t("pièce(s)", "part(s)")}` : ""}</Button>
+            </div>
+          );
+        })()}
       </div>
     );
 
@@ -1458,6 +1486,10 @@ export const G37App = ({ className }: { className?: string }) => {
           <span className={styles.eyebrow}>{t("En ce moment", "Right now")}</span>
           <h2 className={styles.h2} style={{ margin: "4px 0" }}>{dutyTeam ? `${t("Équipe", "Team")} ${dutyTeam} — ${shiftName(code, shiftLabel?.n ?? "")}` : t("Aucune équipe planifiée", "No team scheduled")}</h2>
           <Pill tone="accent">{shiftLabel?.h}</Pill>
+          <div className={styles.note} style={{ marginTop: 10 }}>
+            {t("Alertes ciblées : une panne, un arrêt de machine ou un travail à faire prévient d'abord l'équipe en poste (et les postes sans quart : superviseurs, Boss…). Si la panne n'est pas réglée au bout de 30 minutes, les techniciens des autres équipes sont prévenus à leur tour.",
+              "Targeted alerts: a fault, a machine stop or a work to do first alerts the team on duty (and roles without a shift: supervisors, Boss…). If the fault is not fixed after 30 minutes, technicians of the other teams are alerted too.")}
+          </div>
           {dutyTeam && (
             <div className={styles.meta} style={{ marginTop: 6 }}>
               {state.users.filter((u) => u.team === dutyTeam).map((u) => u.displayName).join(", ") || t("Assigne tes techniciens à une équipe depuis l'onglet Accès.", "Assign your technicians to a team from the Access tab.")}
@@ -1698,120 +1730,7 @@ export const G37App = ({ className }: { className?: string }) => {
 
   /* ---------- Magasin ---------- */
   const renderMagasin = () => (
-    <div className={styles.stack}>
-      <div className={styles.head}><h1 className={styles.title}>{t("Magasin", "Store")}</h1><p className={styles.sub}>{t("Alerte automatique sous le seuil", "Automatic alert below threshold")}</p></div>
-      {can("stockManage") && (
-        <div className={styles.card}>
-          <div className={styles.head}><h2 className={styles.h2}>{t("Ajouter un matériel", "Add an item")}</h2></div>
-          <datalist id="stock-cats">
-            {Array.from(new Set((state.stock ?? []).map((s) => s.category))).sort().map((c) => <option key={c} value={c} />)}
-          </datalist>
-          <div className={styles.row}>
-            <label className={styles.field}><span className={styles.fieldLabel}>{t("Article", "Item")}</span>
-              <Input value={d("sa.n")} onChange={(e) => setD("sa.n", e.target.value)} placeholder={t("Ex. Roulement 6204", "E.g. Bearing 6204")} /></label>
-            <label className={styles.field}><span className={styles.fieldLabel}>{t("Catégorie", "Category")}</span>
-              <Input list="stock-cats" value={d("sa.c")} onChange={(e) => setD("sa.c", e.target.value)} /></label>
-            <label className={styles.field} style={{ maxWidth: 110 }}><span className={styles.fieldLabel}>{t("Unité", "Unit")}</span>
-              <Input value={d("sa.u", "pcs")} onChange={(e) => setD("sa.u", e.target.value)} /></label>
-            <label className={styles.field} style={{ maxWidth: 110 }}><span className={styles.fieldLabel}>{t("Quantité", "Quantity")}</span>
-              <Input type="number" min="0" value={d("sa.q", "0")} onChange={(e) => setD("sa.q", e.target.value)} /></label>
-            <label className={styles.field} style={{ maxWidth: 110 }}><span className={styles.fieldLabel}>{t("Seuil d'alerte", "Alert threshold")}</span>
-              <Input type="number" min="0" value={d("sa.m", String(g37.STOCK_ALERT))} onChange={(e) => setD("sa.m", e.target.value)} /></label>
-            <Button disabled={isSaving || !d("sa.n").trim() || !d("sa.c").trim()} onClick={() => {
-              save({
-                action: "stockAdd", name: d("sa.n").trim(), category: d("sa.c").trim(), unit: d("sa.u", "pcs").trim() || "pcs",
-                quantity: Math.max(0, parseNum(d("sa.q", "0")) ?? 0),
-                minimumQuantity: Math.max(0, parseNum(d("sa.m", String(g37.STOCK_ALERT))) ?? 0),
-              });
-              setD("sa.n", ""); setD("sa.q", "0");
-            }}>{t("Ajouter", "Add")}</Button>
-          </div></div>
-      )}
-      {lowStock.length > 0 && (
-        <div className={styles.card}>
-          <div className={styles.head}><h2 className={styles.h2}>{t("Alerte stock", "Stock alert")}</h2><p className={styles.sub}>{lowStock.length} {t("article(s)", "item(s)")}</p></div>
-          <div className={styles.row}>{lowStock.map((s) => <Pill key={s.id} tone="crit">{s.name} · {s.quantity}</Pill>)}</div>
-        </div>
-      )}
-      <div className={styles.card}>
-        <div className={styles.tableWrap}>
-          <table className={styles.table}>
-            <thead><tr><th>{t("Article", "Item")}</th><th>{t("Catégorie", "Category")}</th><th>{t("Quantité", "Quantity")}</th><th>{t("État", "Status")}</th>{can("stock") && <th>{t("Mettre à jour", "Update")}</th>}{can("stockManage") && <th>{t("Gérer", "Manage")}</th>}</tr></thead>
-            <tbody>
-              {(state.stock ?? []).map((s) => {
-                const qty = Number(s.quantity);
-                const min = Number(s.minimumQuantity || g37.STOCK_ALERT);
-                const editing = d(`se.${s.id}`) === "1";
-                return (
-                  <React.Fragment key={s.id}>
-                  <tr>
-                    <td><strong>{s.name}</strong></td>
-                    <td className={styles.meta}>{s.category}</td>
-                    <td className={styles.num}>{qty} <span className={styles.meta}>{s.unit}</span></td>
-                    <td>{qty < min ? <Pill tone="crit">{t("sous le seuil", "below threshold")}</Pill> : <Pill tone="ok">ok</Pill>}</td>
-                    {can("stock") && (
-                      <td>
-                        <div className={styles.row} style={{ gap: 4 }}>
-                          <Input className={styles.qtyInput} type="number" min="0" value={d(`st.${s.id}`, String(qty))} onChange={(e) => setD(`st.${s.id}`, e.target.value)} />
-                          <Button size="sm" variant="outline" disabled={isSaving}
-                            onClick={() => save({ action: "stockQty", id: s.id, quantity: Math.max(0, Number(d(`st.${s.id}`, String(qty))) || 0) })}>OK</Button>
-                        </div>
-                      </td>
-                    )}
-                    {can("stockManage") && (
-                      <td>
-                        <div className={styles.row} style={{ gap: 4 }}>
-                          <Button size="sm" variant="outline" onClick={() => {
-                            setD(`se.${s.id}`, editing ? "" : "1");
-                            setD(`sen.${s.id}`, s.name); setD(`sec.${s.id}`, s.category);
-                            setD(`seu.${s.id}`, s.unit); setD(`sem.${s.id}`, String(min));
-                          }}>{editing ? t("Fermer", "Close") : t("Modifier", "Edit")}</Button>
-                          {d(`sd.${s.id}`) === "1" ? (
-                            <>
-                              <Button size="sm" disabled={isSaving}
-                                onClick={() => { save({ action: "stockDelete", id: s.id }); setD(`sd.${s.id}`, ""); }}>{t("Confirmer", "Confirm")}</Button>
-                              <Button size="sm" variant="outline" onClick={() => setD(`sd.${s.id}`, "")}>{t("Annuler", "Cancel")}</Button>
-                            </>
-                          ) : (
-                            <Button size="sm" variant="outline" onClick={() => setD(`sd.${s.id}`, "1")}>{t("Supprimer", "Delete")}</Button>
-                          )}
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                  {editing && can("stockManage") && (
-                    <tr>
-                      <td colSpan={6}>
-                        <div className={styles.row}>
-                          <label className={styles.field}><span className={styles.fieldLabel}>{t("Article", "Item")}</span>
-                            <Input value={d(`sen.${s.id}`, s.name)} onChange={(e) => setD(`sen.${s.id}`, e.target.value)} /></label>
-                          <label className={styles.field}><span className={styles.fieldLabel}>{t("Catégorie", "Category")}</span>
-                            <Input list="stock-cats" value={d(`sec.${s.id}`, s.category)} onChange={(e) => setD(`sec.${s.id}`, e.target.value)} /></label>
-                          <label className={styles.field} style={{ maxWidth: 110 }}><span className={styles.fieldLabel}>{t("Unité", "Unit")}</span>
-                            <Input value={d(`seu.${s.id}`, s.unit)} onChange={(e) => setD(`seu.${s.id}`, e.target.value)} /></label>
-                          <label className={styles.field} style={{ maxWidth: 110 }}><span className={styles.fieldLabel}>{t("Seuil", "Threshold")}</span>
-                            <Input type="number" min="0" value={d(`sem.${s.id}`, String(min))} onChange={(e) => setD(`sem.${s.id}`, e.target.value)} /></label>
-                          <Button disabled={isSaving || !d(`sen.${s.id}`, s.name).trim() || !d(`sec.${s.id}`, s.category).trim()} onClick={() => {
-                            save({
-                              action: "stockEdit", id: s.id,
-                              name: d(`sen.${s.id}`, s.name).trim(), category: d(`sec.${s.id}`, s.category).trim(),
-                              unit: d(`seu.${s.id}`, s.unit).trim() || "pcs",
-                              minimumQuantity: Math.max(0, parseNum(d(`sem.${s.id}`, String(min))) ?? 0),
-                            });
-                            setD(`se.${s.id}`, "");
-                          }}>{t("Enregistrer", "Save")}</Button>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                  </React.Fragment>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+    <StoreView state={state} lang={lang} save={save} canStock={can("stock")} canManage={can("stockManage")} />
   );
 
   /* ---------- Discussion ---------- */
@@ -2095,7 +2014,7 @@ export const G37App = ({ className }: { className?: string }) => {
   const visibleTabs = restricted
     ? allowedTabs.map((k) => TABS.find(([key]) => key === k)).filter((x): x is [string, string, string] => !!x)
     : TABS.filter(([key]) => key === "ia" ? !me.pending : true);
-  const special = ["parametres", "profil", "guide"];
+  const special = ["parametres", "profil", "guide", "indicateurs"];
   const activeTab = special.includes(tab) ? tab : visibleTabs.some(([key]) => key === tab) ? tab : (visibleTabs[0]?.[0] ?? "accueil");
 
   // Menus regroupés : chaque onglet garde ses propres droits, seul l'affichage est regroupé.
@@ -2134,6 +2053,7 @@ export const G37App = ({ className }: { className?: string }) => {
           openPeer={peerToOpen} onPeerOpened={() => setPeerToOpen(null)} />
       );
       case "guide": return <ConnectGuide state={state} lang={lang} onBack={() => goto("parametres")} />;
+      case "indicateurs": return <IndicatorsView state={state} lang={lang} onBack={() => goto("accueil")} onOpenMachine={(no) => { setTab("machines"); setOpenMachine(no); window.scrollTo(0, 0); }} />;
       case "ia": return renderAssistant();
       case "parametres": return <SettingsView state={state} lang={lang} setLang={setLang} onBack={() => goto("accueil")} onGuide={() => goto("guide")} />;
       case "profil": return (
@@ -2177,6 +2097,27 @@ export const G37App = ({ className }: { className?: string }) => {
     gears: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1",
     discussion: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z",
     machines: "M4 20V8l5 3V8l5 3V4h6v16zM8 16h2M13 16h2",
+  };
+  // Une icône propre à chaque entrée du menu Plus.
+  const MORE_ICON: Record<string, string> = {
+    indicateurs: "M4 20V10M10 20V4M16 20v-7M22 20H2",
+    "g-entretien": "M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
+    maintenance: "M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
+    graissage: "M12 2.7c3 3.4 6 6.9 6 10.3a6 6 0 0 1-12 0c0-3.4 3-6.9 6-10.3z",
+    lubrification: "M12 2.7c3 3.4 6 6.9 6 10.3a6 6 0 0 1-12 0c0-3.4 3-6.9 6-10.3zM9 14a3 3 0 0 0 3 3",
+    schedule: "M4 5h16v15H4zM4 10h16M9 3v4M15 3v4",
+    gears: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1",
+    calcul: "M5 3h14v18H5zM8 7h8M8 12h2M12 12h2M16 12v5M8 16h2M12 16h2",
+    quarts: "M12 7v5l3 2M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z",
+    magasin: "M3 7l9-4 9 4v10l-9 4-9-4V7zM3 7l9 4 9-4M12 11v10",
+    ia: "M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8zM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z",
+    acces: "M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6zM9 12l2 2 4-4",
+    travaux: "M9 5h6M9 3h6v4H9zM6 5H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-1M8 13l2 2 5-5",
+    "g-pannes": "M12 3l10 18H2L12 3zM12 10v5M12 18h.01",
+    pannes: "M12 3l10 18H2L12 3zM12 10v5M12 18h.01",
+    machines: "M4 20V8l5 3V8l5 3V4h6v16zM8 16h2M13 16h2",
+    discussion: "M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z",
+    _: "M4 4h16v16H4z",
   };
   const mainKeys = restricted ? visibleTabs.map(([k]) => k).slice(0, 5) : ["accueil", "machines", "pannes", "travaux", "discussion"];
   const restrictedItems = visibleTabs.slice(0, 5).map(([key, fr, en]) => ({
@@ -2342,9 +2283,15 @@ export const G37App = ({ className }: { className?: string }) => {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01M2 9a14 14 0 0 1 20 0" /></svg>
               <span>{t("Connexion sans Internet", "Offline connection")}</span>
             </button>
+            {(!restricted || can("faults")) && (
+              <button className={styles.moreItem} onClick={() => { setMoreOpen(false); goto("indicateurs"); }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={MORE_ICON.indicateurs} /></svg>
+                <span>{t("Indicateurs", "Indicators")}</span>
+              </button>
+            )}
             {moreItems.map((it) => (
               <button key={it.key} className={styles.moreItem} onClick={() => { setMoreOpen(false); goto(it.members ? it.members[0] : it.key); }}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3" /><path d="M9 12h6" /></svg>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={MORE_ICON[it.key] ?? MORE_ICON._} /></svg>
                 <span>{lang === "fr" ? it.fr : it.en}</span>
               </button>
             ))}
@@ -2355,6 +2302,9 @@ export const G37App = ({ className }: { className?: string }) => {
           </div>
         </DialogContent>
       </Dialog>
+
+      <MaintChecklistDialog open={checklistFor !== null} onOpenChange={(o) => { if (!o) setChecklistFor(null); }} machineNo={checklistFor}
+        state={state} lang={lang} canEditTemplate={can("specs")} save={save} />
     </div>
   );
 };

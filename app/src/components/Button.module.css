@@ -29,14 +29,18 @@
   }
 
   /* Size variants - ensuring proper touch targets */
+  /* Boutons tactiles : au moins 36 px de haut (doigts, gants). */
   .sm {
-    height: 1.5rem;
-    padding: 0 var(--spacing-2);
-    font-size: 0.875rem;
+    min-height: 2.25rem;
+    height: auto;
+    padding: 0 var(--spacing-3);
+    font-size: 0.82rem;
+    font-weight: 600;
   }
 
   .md {
-    height: 2.5rem;
+    font-weight: 600;
+    height: 2.75rem;
     padding: 0 var(--spacing-3);
     font-size: 0.9375rem;
   }

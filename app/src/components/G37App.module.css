@@ -142,22 +142,22 @@
 .todoWhen { font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
 
 
-.stack { display: flex; flex-direction: column; gap: 14px; padding-top: 16px; }
-.card { background: var(--g-surface); border: 1px solid var(--g-line); border-radius: var(--g-radius); padding: 14px; }
+.stack { display: flex; flex-direction: column; gap: 16px; padding-top: 18px; }
+.card { background: var(--g-surface); border: 1px solid var(--g-line); border-radius: 18px; padding: 16px; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .between { justify-content: space-between; }
 .field { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 150px; }
 .fieldLabel { font-size: 0.7rem; font-weight: 600; color: var(--g-dim); text-transform: uppercase; letter-spacing: 0.07em; }
 
 .head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
-.title { font-size: 1.45rem; font-weight: 700; line-height: 1.15; margin: 0; }
-.h2 { font-size: 1.05rem; font-weight: 700; margin: 0; }
-.sub { font-size: 0.8rem; color: var(--g-dim); margin: 0; }
+.title { font-size: 1.45rem; font-weight: 600; line-height: 1.2; margin: 0; letter-spacing: -0.01em; }
+.h2 { font-size: 1.02rem; font-weight: 600; margin: 0; }
+.sub { font-size: 0.8rem; color: var(--g-dim); margin: 2px 0 0; line-height: 1.4; }
 .eyebrow { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.13em; color: var(--g-dim); font-weight: 700; }
 
 .kpis { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
-.kpi { background: var(--g-surface); border: 1px solid var(--g-line); border-radius: var(--g-radius); padding: 12px; }
-.kpiValue { font-family: var(--font-family-mono, ui-monospace, monospace); font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.kpi { background: var(--g-surface); border: 1px solid var(--g-line); border-radius: 16px; padding: 14px; }
+.kpiValue { font-family: var(--font-family-monospace, ui-monospace, monospace); font-size: 1.5rem; font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .kpiLabel { font-size: 0.72rem; color: var(--g-dim); margin-top: 3px; }
 .toneOk .kpiValue { color: var(--g-ok); }
 .toneWarn .kpiValue { color: var(--g-warn); }
@@ -165,17 +165,17 @@
 
 .machines { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }
 .mcard {
-  background: var(--g-surface); border: 1px solid var(--g-line); border-radius: var(--g-radius);
-  padding: 10px; text-align: left; cursor: pointer; color: inherit;
+  background: var(--g-surface); border: 1px solid var(--g-line); border-radius: 16px;
+  padding: 12px; text-align: left; cursor: pointer; color: inherit; min-height: 44px;
   display: flex; flex-direction: column; gap: 5px; min-width: 0; font: inherit;
 }
 .mcard:hover { border-color: var(--g-accent); }
-.mcardNo { font-size: 1.1rem; font-weight: 700; }
-.mcardSub { font-family: var(--font-family-mono, ui-monospace, monospace); font-size: 0.68rem; color: var(--g-dim); }
+.mcardNo { font-family: var(--font-family-monospace, monospace); font-size: 1.05rem; font-weight: 600; }
+.mcardSub { font-family: var(--font-family-monospace, ui-monospace, monospace); font-size: 0.68rem; color: var(--g-dim); }
 
 .pill {
   display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
-  font-size: 0.68rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 600; padding: 3px 9px; border-radius: 999px;
   background: var(--g-surface-2); color: var(--g-dim);
 }
 .pillOk { background: var(--g-ok-soft); color: var(--g-ok); }
@@ -185,15 +185,16 @@
 
 .tableWrap { overflow-x: auto; }
 .table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
-.table th, .table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--g-line); vertical-align: top; }
+.table th, .table td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--g-line); vertical-align: middle; }
+.table tbody tr:last-child td { border-bottom: 0; }
 .table th { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--g-dim); font-weight: 700; white-space: nowrap; }
-.num { font-family: var(--font-family-mono, ui-monospace, monospace); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.num { font-family: var(--font-family-monospace, ui-monospace, monospace); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-.item { border-bottom: 1px solid var(--g-line); padding: 10px 0; }
+.item { border-bottom: 1px solid var(--g-line); padding: 12px 0; display: flex; flex-direction: column; gap: 4px; }
 .item:last-child { border-bottom: 0; }
 .meta { font-size: 0.75rem; color: var(--g-dim); }
-.empty { border: 1px dashed var(--g-line); border-radius: var(--g-radius); padding: 18px; text-align: center; color: var(--g-dim); font-size: 0.85rem; }
-.note { font-size: 0.75rem; color: var(--g-dim); background: var(--g-surface-2); border-radius: 8px; padding: 7px 10px; }
+.empty { border: 1px dashed var(--g-line); border-radius: 16px; padding: 20px; text-align: center; color: var(--g-dim); font-size: 0.85rem; }
+.note { font-size: 0.78rem; color: #b8c6d8; background: var(--g-surface-2); border-radius: 12px; padding: 10px 12px; line-height: 1.45; }
 .two { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
 .qtyInput { width: 86px; }
 .gearInput { width: 78px; }
@@ -256,3 +257,17 @@
 .moreItem .navBadge { position: absolute; top: 6px; right: 10px; }
 .moreDanger { color: #fca5a5; }
 .moreDanger svg { color: #ef4444; }
+
+
+/* ---------- Listes en cartes (maintenance) ---------- */
+.listCard { background: var(--g-surface); border: 1px solid var(--g-line); border-radius: 18px; overflow: hidden; }
+.listRow { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--g-line); flex-wrap: wrap; }
+.listRow:first-child { border-top: 0; }
+.listMc { border: 0; background: var(--g-surface-2); color: var(--g-ink); border-radius: 10px; min-height: 40px; padding: 0 10px; font-family: var(--font-family-monospace, monospace); font-weight: 600; font-size: 0.86rem; cursor: pointer; flex: none; }
+.listMain { display: flex; flex-direction: column; gap: 4px; flex: 1 1 140px; min-width: 0; }
+.listActions { display: flex; gap: 6px; align-items: center; flex: 1 1 220px; justify-content: flex-end; }
+.dateInput { max-width: 160px; }
+
+/* ---------- Panne : réglage avec pièces utilisées ---------- */
+.fixBox { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 12px; border-radius: 14px; background: var(--g-surface-2); }
+.partChip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid #3a5576; background: var(--g-surface); color: var(--g-ink); font: inherit; font-size: 0.78rem; cursor: pointer; }

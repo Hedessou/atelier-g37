@@ -16,7 +16,7 @@ import "./base.css";
 import { installNetwork } from "./lib/net";
 import { installLinkHandling } from "./lib/links";
 import { initUpdater } from "./lib/updater";
-import { restorePush } from "./helpers/pushClient";
+import { installPushAutoSync, restorePush } from "./helpers/pushClient";
 import { AuthProvider } from "./helpers/useAuth";
 import { ThemeModeProvider } from "./helpers/themeMode";
 import { TooltipProvider } from "./components/Tooltip";
@@ -36,6 +36,7 @@ installNetwork();
 installLinkHandling();
 void initUpdater();
 void restorePush();
+installPushAutoSync();
 
 if (Capacitor.isNativePlatform()) {
   StatusBar.setStyle({ style: Style.Dark }).catch(() => {});

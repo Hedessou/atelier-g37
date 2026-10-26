@@ -6,10 +6,11 @@ import { handleMutate, handleSync } from "./routes/mutate.ts";
 import { handleCalc, handlePayments, handlePaymentDecide, handlePayNetworks, handleQuota, handleSubscribe, handleUserLimits } from "./routes/billing.ts";
 import { handleAssistant } from "./routes/assistant.ts";
 import { handleExport } from "./routes/export.ts";
+import { handleReport } from "./routes/report.ts";
 import { pushSelfTest } from "./lib/push.ts";
-import { handleCallSignal, handleDevice, handleDms, handleRelay, handleSecrets } from "./routes/p2p.ts";
+import { handleCallSignal, handleDevice, handleDmRead, handleDms, handleRelay, handleSecrets } from "./routes/p2p.ts";
 import { db } from "./lib/db.ts";
-import { handleAvatarUpload, handleCron, handleFileUrls, handleManual, handlePush, handleUpload, handleUserRole, handleUsers, handleVersion } from "./routes/misc.ts";
+import { handleAvatarUpload, handleCron, handleCronEscalate, handleFileUrls, handleManual, handlePush, handleUpload, handleUserRole, handleUsers, handleVersion } from "./routes/misc.ts";
 import { handleCallRoom, handleCallRooms } from "./routes/calls.ts";
 
 type Handler = (request: Request) => Promise<Response>;
@@ -41,6 +42,7 @@ const ROUTES: Record<string, Handler> = {
   "GET g37/secrets": handleSecrets,
   "POST g37/relay": handleRelay,
   "GET g37/dms": handleDms,
+  "POST g37/dm_read": handleDmRead,
   "POST g37/call_signal": handleCallSignal,
   "POST g37/call_room": handleCallRoom,
   "GET g37/call_rooms": handleCallRooms,
@@ -50,6 +52,8 @@ const ROUTES: Record<string, Handler> = {
   "POST userRole": handleUserRole,
   "GET app/version": () => handleVersion(),
   "POST cron/due": handleCron,
+  "POST cron/escalate": handleCronEscalate,
+  "GET g37/report": handleReport,
   "POST push/selftest": async (request: Request) => {
     const key = request.headers.get("x-cron-key") ?? "";
     const row = await db.selectFrom("appConfig").select("value").where("key", "=", "cron.key").executeTakeFirst();
