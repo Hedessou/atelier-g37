@@ -36,6 +36,8 @@ type Props = {
   unread?: number;         // messages non lus
   actions: HomeAction[];   // actions rapides de l'accueil atelier / production
   onMessages: () => void;
+  onSchedule?: () => void;   // superviseur : programmer la maintenance de demain
+  onWorkLog?: () => void;    // superviseur, manager, Boss : travaux effectués
 };
 
 const H = 3600000;
@@ -59,7 +61,7 @@ function downHours(f: G37Failure, until: Date) {
   return Math.max(0, (new Date(end).getTime() - new Date(f.stoppedAt).getTime()) / H);
 }
 
-export function HomeView({ state, lang, todo, boss, canBossView, onOpenMachine, goto, prod = false, unread = 0, actions, onMessages }: Props) {
+export function HomeView({ state, lang, todo, boss, canBossView, onOpenMachine, goto, prod = false, unread = 0, actions, onMessages, onSchedule, onWorkLog }: Props) {
   const fr = lang === "fr";
   const t = (a: string, b: string) => (fr ? a : b);
   const [view, setView] = useState<"atelier" | "boss">(() => {
@@ -204,6 +206,15 @@ export function HomeView({ state, lang, todo, boss, canBossView, onOpenMachine, 
     return (
       <div className={styles.home}>
         {header}
+        {onWorkLog && (
+          <button type="button" className={`${styles.card} ${styles.costCard}`} style={{ flexDirection: "row", alignItems: "center", cursor: "pointer", font: "inherit", color: "inherit", textAlign: "left" }} onClick={onWorkLog}>
+            <span style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1, minWidth: 0 }}>
+              <span className={styles.statLabel}>{t("Travaux effectués", "Work done")}</span>
+              <span style={{ fontWeight: 600 }}>{t("Check-lists, maintenances, graissages et réparations", "Checklists, maintenance, greasing and repairs")}</span>
+            </span>
+            <span className={styles.costBtn}>{t("Voir", "View")}</span>
+          </button>
+        )}
         <section className={styles.pulse} aria-label={t("Efficacité du mois", "Monthly efficiency")}>
           <div className={styles.effTop}>
             <div>
@@ -333,6 +344,6 @@ export function HomeView({ state, lang, todo, boss, canBossView, onOpenMachine, 
   // =================== Atelier / production ===================
   return (
     <HomeLive state={state} lang={lang} todo={todo} prod={prod} unread={unread} actions={actions} toggle={toggle}
-      onOpenMachine={onOpenMachine} goto={goto} onMessages={onMessages} />
+      onOpenMachine={onOpenMachine} goto={goto} onMessages={onMessages} onSchedule={onSchedule} onWorkLog={onWorkLog} />
   );
 }

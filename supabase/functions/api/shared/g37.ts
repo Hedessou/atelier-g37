@@ -50,6 +50,15 @@ function canChat(user: { id?: number; jobRole?: string | null } | null | undefin
   if (!user) return false;
   return user.id === OWNER_USER_ID || !NO_CHAT_ROLES.includes(user.jobRole ?? "");
 }
+// Écran « Travaux effectués » (27/10/2026) : superviseur, manager, Boss et admin.
+const WORKLOG_ROLES = ["superviseur", "manager", "forman"];
+function canSeeWorkLog(user: { role?: string | null; jobRole?: string | null } | null | undefined): boolean {
+  return !!user && (user.role === "admin" || WORKLOG_ROLES.includes(user.jobRole ?? ""));
+}
+// Programmer la maintenance du lendemain depuis l'accueil : superviseur (et admin).
+function canScheduleMaint(user: { role?: string | null; jobRole?: string | null } | null | undefined): boolean {
+  return !!user && (user.role === "admin" || user.jobRole === "superviseur");
+}
 function generalOnDuty(now: Date = new Date()): boolean {
   const local = new Date(now.getTime() + 3600000);
   const h = local.getUTCHours();
@@ -90,4 +99,4 @@ function visibleTabs(user: { role?: string | null; jobRole?: string | null } | n
   return ROLES[user.jobRole ?? "helper"]?.tabs ?? null;
 }
 
-export const g37 = { GROUPS, SPEC_LABELS, GREASE_POINTS, LUB_BOXES, CYCLE_OVERRIDES, ROLES, TEAMS, SHIFT_TYPES, GENERAL, OWNER_USER_ID, generalOnDuty, NO_CHAT_ROLES, canChat, M_STATUS, STOP_REASONS, COMMON_FAULTS, GEAR_RANGE, GEARS_PER_MACHINE, STOCK_ALERT, ACCESS_CODE, DRAFT_K, groupOf, cycleDays, inGearRange, draftOf, can, visibleTabs };
+export const g37 = { GROUPS, SPEC_LABELS, GREASE_POINTS, LUB_BOXES, CYCLE_OVERRIDES, ROLES, TEAMS, SHIFT_TYPES, GENERAL, OWNER_USER_ID, generalOnDuty, NO_CHAT_ROLES, canChat, WORKLOG_ROLES, canSeeWorkLog, canScheduleMaint, M_STATUS, STOP_REASONS, COMMON_FAULTS, GEAR_RANGE, GEARS_PER_MACHINE, STOCK_ALERT, ACCESS_CODE, DRAFT_K, groupOf, cycleDays, inGearRange, draftOf, can, visibleTabs };

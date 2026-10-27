@@ -1,5 +1,5 @@
 {
   "nativeVersionCode": 5,
   "minNativeVersionCode": 4,
-  "notes": "Mot de passe oublié : sur l'écran de connexion, « Mot de passe oublié ? » envoie un code à 6 chiffres par e-mail pour choisir un nouveau mot de passe. Tous les menus en verre givré ; liaison Bluetooth / Wi-Fi facultative (Paramètres → Synchronisation)."
+  "notes": "Nouveau : salle des métiers en direct (les broches tournent, chrono des arrêts, fil d'actualité) ; « Travaux effectués » pour le superviseur, le manager et le Boss (check-lists détaillées avec photos, graissages, travaux, pannes réparées) ; le superviseur programme depuis l'accueil la maintenance du lendemain et les techniciens sont prévenus. Mot de passe oublié : code par e-mail."
 }

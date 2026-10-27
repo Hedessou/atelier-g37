@@ -23,6 +23,7 @@ export const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("cyclePointEdit"), id: z.string().min(1).max(80), name: z.string().trim().min(1).max(80), days: z.number().int().min(1).max(3650) }),
   z.object({ action: z.literal("cyclePointDelete"), id: z.string().min(1).max(80) }),
   z.object({ action: z.literal("maintPlan"), machineNo: z.number().int().min(1).max(28), next: z.coerce.date().nullable() }),
+  z.object({ action: z.literal("maintSchedule"), machines: z.array(z.number().int().min(1).max(28)).min(1).max(28), day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), note: z.string().trim().max(300).nullable().optional() }),
   z.object({ action: z.literal("maintDone"), machineNo: z.number().int().min(1).max(28), checklist: z.object({
     items: z.array(z.object({ text: z.string().trim().min(1).max(200), done: z.boolean(), note: z.string().max(300).nullable().optional(), extra: z.boolean().optional() })).max(80),
     photoBefore: z.string().max(300).nullable().optional(), photoAfter: z.string().max(300).nullable().optional(), notes: z.string().max(1000).nullable().optional(),
@@ -194,7 +195,7 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       const work = await db.selectFrom("works").select(["machineNo", "title", "status"]).where("id", "=", input.id).executeTakeFirst();
       if (!work) return ok("Ce travail a été supprimé entre-temps.");
       if (work.status === "done") return ok();
-      await db.updateTable("works").set({ status: "done", doneByName: me.displayName }).where("id", "=", input.id).execute();
+      await db.updateTable("works").set({ status: "done", doneByName: me.displayName, doneAt: now }).where("id", "=", input.id).execute();
       await notifyRoles({ jobRoles: ["superviseur", "technicien", "genmaint"], excludeUserId: me.id, tag: `travail-termine-${input.id}`, title: `Travail terminé — M/C ${work.machineNo}`, body: `${work.title} — clôturé par ${me.displayName}` });
       return ok();
     }
@@ -270,8 +271,23 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
     }
     case "maintPlan": {
       if (!need("maint")) return deny("Seuls l'admin, le superviseur, le technicien et le responsable maintenance planifient les visites.");
-      await db.updateTable("machines").set({ nextMaintenance: input.next }).where("id", "=", machineId(input.machineNo)).execute();
+      await db.updateTable("machines").set({ nextMaintenance: input.next, maintPlannedBy: null, maintPlannedAt: null, maintPlanNote: null }).where("id", "=", machineId(input.machineNo)).execute();
       return ok();
+    }
+    case "maintSchedule": {
+      // Le superviseur programme, la veille, les métiers qui passent en maintenance (27/10/2026).
+      if (!g37.canScheduleMaint(me)) return deny("Seul le superviseur programme la maintenance depuis l'accueil.");
+      const list = [...new Set(input.machines)].sort((a, b) => a - b);
+      const day = new Date(`${input.day}T00:00:00Z`);
+      const note = input.note?.trim() || null;
+      for (const no of list) {
+        await db.updateTable("machines").set({ nextMaintenance: day, maintPlannedBy: me.displayName, maintPlannedAt: now, maintPlanNote: note }).where("id", "=", machineId(no)).execute();
+      }
+      const when = day.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+      const mcs = list.map((n) => `M/C ${n}`).join(", ");
+      await notifyRoles({ jobRoles: ["technicien", "shift", "genmaint", "superviseur", "manager"], excludeUserId: me.id, tag: `maint-prog-${input.day}`,
+        title: `Maintenance programmée — ${when}`, body: `${mcs}${note ? ` — ${note}` : ""} (par ${me.displayName})`, data: { tab: "maintenance" } });
+      return ok(`${list.length} métier${list.length > 1 ? "s" : ""} programmé${list.length > 1 ? "s" : ""} pour ${when}.`);
     }
     case "maintDone": {
       if (!need("maint")) return deny("Tu n'as pas le droit de valider une maintenance.");
@@ -281,7 +297,7 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       const doneCount = cl ? cl.items.filter((i) => i.done).length : 0;
       const summary = cl ? `Check-list : ${doneCount}/${cl.items.length} étape(s) faite(s)${cl.notes?.trim() ? ` — ${cl.notes.trim()}` : ""}` : null;
       await db.insertInto("maintenanceRecords").values({ id: recordId, machineId: machineId(input.machineNo), maintenanceType: "Visite périodique", performedAt: now, nextDue: next, technician: me.displayName, notes: summary }).execute();
-      await db.updateTable("machines").set({ lastMaintenance: now, nextMaintenance: next }).where("id", "=", machineId(input.machineNo)).execute();
+      await db.updateTable("machines").set({ lastMaintenance: now, nextMaintenance: next, maintPlannedBy: null, maintPlannedAt: null, maintPlanNote: null }).where("id", "=", machineId(input.machineNo)).execute();
       if (cl) {
         const photo = (k: string | null | undefined) => (k && /^chat\/[\w.\-]+$/.test(k) ? k : null);
         await sql`INSERT INTO maint_checklists (id, machine_no, maintenance_id, done_at, author_name, items, photo_before, photo_after, notes)

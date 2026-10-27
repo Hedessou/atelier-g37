@@ -73,6 +73,12 @@ export const schema = z.discriminatedUnion("action", [
     next: z.coerce.date().nullable(),
   }),
   z.object({
+    action: z.literal("maintSchedule"),
+    machines: z.array(z.number().int().min(1).max(28)).min(1).max(28),
+    day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    note: z.string().trim().max(300).nullable().optional(),
+  }),
+  z.object({
     action: z.literal("maintDone"),
     machineNo: z.number().int().min(1).max(28),
     checklist: z.object({

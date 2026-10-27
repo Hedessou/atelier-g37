@@ -20,6 +20,8 @@ type Props = {
   onOpenMachine: (no: number) => void;
   goto: (tab: string) => void;
   onMessages: () => void;
+  onSchedule?: () => void;               // superviseur : programmer la maintenance de demain
+  onWorkLog?: () => void;                // superviseur, manager, Boss : travaux effectués
 };
 
 const H = 3600000;
@@ -81,7 +83,7 @@ function durText(ms: number, fr: boolean) {
 type Tone = "ok" | "crit" | "warn" | "info";
 type Tile = { key: string; label: string; icon: string; tone: Tone; count: number; sub: string; late: HomeTodo[]; soon: HomeTodo[]; tab: string; tabLabel: string; direct?: () => void };
 
-export function HomeLive({ state, lang, todo, prod, unread, actions, toggle, onOpenMachine, goto, onMessages }: Props) {
+export function HomeLive({ state, lang, todo, prod, unread, actions, toggle, onOpenMachine, goto, onMessages, onSchedule, onWorkLog }: Props) {
   const fr = lang === "fr";
   const t = (a: string, b: string) => (fr ? a : b);
   const now = new Date();
@@ -105,6 +107,15 @@ export function HomeLive({ state, lang, todo, prod, unread, actions, toggle, onO
   const general = duty?.general ?? g37.generalOnDuty(now);
   const dutyTeam = duty?.team || null;
   const shiftHours = dutyTeam ? g37.SHIFT_TYPES.find((s) => s.k === duty?.code)?.h.replace(" — ", "–") : null;
+
+  // ---- Maintenance programmée par le superviseur (aujourd'hui et demain) ----
+  const todayIso = new Date(now.getTime() + H).toISOString().slice(0, 10);
+  const tomorrowIso = new Date(now.getTime() + H + 86400000).toISOString().slice(0, 10);
+  const planned = (iso: string) => machines.filter((m) => m.plannedBy && m.nextMaintenance && new Date(m.nextMaintenance).toISOString().slice(0, 10) === iso);
+  const planToday = planned(todayIso);
+  const planTomorrow = planned(tomorrowIso);
+  const evening = hour >= 14;          // « la veille » : le bouton s'allume l'après-midi
+  const showPlan = !prod && (planToday.length > 0 || planTomorrow.length > 0 || !!onSchedule);
 
   // ---- Cartes « à surveiller » ----
   const faults = todo.filter((x) => x.group === "fault");
@@ -257,6 +268,35 @@ export function HomeLive({ state, lang, todo, prod, unread, actions, toggle, onO
         </div>
       </section>
 
+      {/* Maintenance programmée (superviseur : bouton pour programmer demain) */}
+      {showPlan && (
+        <section className={`${styles.glass} ${styles.plan} ${styles.rise} ${onSchedule && evening && planTomorrow.length === 0 ? styles.planCall : ""}`} style={rise()} aria-label={t("Maintenance programmée", "Scheduled maintenance")}>
+          <div className={styles.panelHead}>
+            <span className={styles.panelTitle}><Ico d={ICONS.calendar} size={18} /> {t("Maintenance programmée", "Scheduled maintenance")}</span>
+          </div>
+          {[{ label: t("Aujourd'hui", "Today"), list: planToday }, { label: t("Demain", "Tomorrow"), list: planTomorrow }].filter((x) => x.list.length).map((x) => (
+            <div key={x.label} className={styles.planRow}>
+              <span className={styles.planDay}>{x.label}</span>
+              <div className={styles.planChips}>
+                {x.list.map((m) => (
+                  <button key={m.no} type="button" className={styles.planChip} onClick={() => onOpenMachine(m.no)}>M/C {pad(m.no)}</button>
+                ))}
+              </div>
+              <span className={styles.planBy}>{t("par", "by")} {x.list[0].plannedBy}{x.list[0].planNote ? ` · « ${x.list[0].planNote} »` : ""}</span>
+            </div>
+          ))}
+          {planToday.length === 0 && planTomorrow.length === 0 && (
+            <p className={styles.planEmpty}>{t("Rien de programmé pour aujourd'hui ni demain.", "Nothing scheduled for today or tomorrow.")}</p>
+          )}
+          {onSchedule && (
+            <button type="button" className={styles.planBtn} onClick={onSchedule}>
+              <Ico d={ICONS.wrench} size={20} />
+              {planTomorrow.length ? t("Modifier la maintenance de demain", "Edit tomorrow's maintenance") : t("Programmer la maintenance de demain", "Schedule tomorrow's maintenance")}
+            </button>
+          )}
+        </section>
+      )}
+
       {/* À surveiller */}
       <section className={`${styles.section} ${styles.rise}`} style={rise()} aria-label={t("À surveiller", "Watch")}>
         <h2 className={styles.h2}>{t("À surveiller", "Watch")}</h2>
@@ -335,6 +375,12 @@ export function HomeLive({ state, lang, todo, prod, unread, actions, toggle, onO
           </button>
         ))}
       </section>
+
+      {onWorkLog && (
+        <button type="button" className={`${styles.glass} ${styles.more} ${styles.rise}`} style={rise()} onClick={onWorkLog}>
+          <span>{t("Travaux effectués (check-lists, graissages…)", "Work done (checklists, greasing…)")}</span><Ico d={ICONS.chevron} size={18} />
+        </button>
+      )}
 
       {!prod && (
         <button type="button" className={`${styles.glass} ${styles.more} ${styles.rise}`} style={rise()} onClick={() => goto("indicateurs")}>

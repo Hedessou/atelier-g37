@@ -1,0 +1,39 @@
+/* Programmer la maintenance (fenêtre hors de .app : couleurs écrites en dur, comme la check-list). */
+.dialog { max-height: calc(100dvh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 14px; background: #13233a !important; color: #e8eef6; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 22px; }
+.days { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.day, .dayOn { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; padding: 10px; border-radius: 14px; font: inherit; cursor: pointer; text-align: left; min-height: 60px; }
+.day { border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(255, 255, 255, 0.05); color: #e8eef6; }
+.dayOn { border: 1px solid rgba(245, 158, 11, 0.7); background: rgba(245, 158, 11, 0.16); color: #fde68a; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2); }
+.day strong, .dayOn strong { font-size: 0.85rem; }
+.day span, .dayOn span { font-size: 0.75rem; opacity: 0.85; text-transform: capitalize; }
+.day input, .dayOn input { width: 100%; min-width: 0; border: 0; background: transparent; color: inherit; font: inherit; font-size: 0.72rem; padding: 0; color-scheme: dark; }
+
+.barRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.hint { font-size: 0.8rem; color: #9fb0c6; }
+.dueBtn { flex: none; min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid rgba(251, 191, 36, 0.5); background: rgba(251, 191, 36, 0.12); color: #fde68a; font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+
+.grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.mc {
+  position: relative; aspect-ratio: 1; min-height: 40px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05); color: #e8eef6; font: inherit; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: transform 120ms ease, background 160ms ease, border-color 160ms ease;
+}
+.mc:active { transform: scale(0.92); }
+.mcNo { font-family: var(--font-family-monospace, monospace); font-weight: 600; font-size: 0.9rem; }
+.mcStop { border-color: rgba(248, 113, 113, 0.5); }
+.mcMaint { border-color: rgba(251, 191, 36, 0.4); }
+.mcOn { background: linear-gradient(140deg, #f59e0b, #f97316); border-color: rgba(255, 255, 255, 0.3); color: #1a1205; animation: pop 220ms cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes pop { 0% { transform: scale(0.85); } 60% { transform: scale(1.08); } 100% { transform: none; } }
+.dueDot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 6px rgba(251, 191, 36, 0.8); }
+.mcOn .dueDot { background: #1a1205; box-shadow: none; }
+.tick { position: absolute; bottom: 2px; right: 5px; font-size: 0.65rem; font-weight: 800; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.75rem; color: #9fb0c6; margin-top: -6px; }
+.legend i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+.lDue { background: #fbbf24; }
+.lStop { border: 2px solid rgba(248, 113, 113, 0.7); }
+
+.note { width: 100%; border-radius: 14px; border: 1px solid rgba(255, 255, 255, 0.12); background: #0f1b2d; color: #e8eef6; padding: 10px 12px; font: inherit; font-size: 0.9rem; resize: vertical; box-sizing: border-box; }
+.go { min-height: 52px; border-radius: 16px; border: 0; background: linear-gradient(140deg, #f59e0b, #f97316); color: #1a1205; font: inherit; font-weight: 700; font-size: 0.95rem; cursor: pointer; }
+.go:disabled { background: rgba(255, 255, 255, 0.08); color: #9fb0c6; cursor: default; }
+.foot { margin: -4px 0 0; font-size: 0.75rem; color: #9fb0c6; line-height: 1.4; }
+@media (prefers-reduced-motion: reduce) { .mcOn { animation: none; } }

@@ -32,6 +32,9 @@ import { HomeView, type HomeTodo, type HomeAction } from "./HomeView";
 import { ICONS } from "./HomeLive";
 import { ChecklistEditor, MaintChecklistDialog } from "./Checklist";
 import { IndicatorsView } from "./IndicatorsView";
+import { WorkLogView } from "./WorkLogView";
+import { MaintScheduleDialog } from "./MaintScheduleDialog";
+import { MachinesLive } from "./MachinesLive";
 import { MachineHistory } from "./MachineHistory";
 import { StoreView } from "./StoreView";
 import styles from "./G37App.module.css";
@@ -200,7 +203,7 @@ export const G37App = ({ className }: { className?: string }) => {
     const open = (e: Event) => {
       const raw = (e as CustomEvent<string>).detail;
       const k = raw === "messages" ? "discussion" : raw;
-      if (TABS.some(([key]) => key === k) || k === "parametres" || k === "profil" || k === "guide") { setTab(k); window.scrollTo(0, 0); }
+      if (TABS.some(([key]) => key === k) || k === "parametres" || k === "profil" || k === "guide" || k === "realises") { setTab(k); window.scrollTo(0, 0); }
     };
     // Notification d'un message privé : ouvrir directement la conversation ; appel manqué : l'onglet Appels.
     const openPeer = (e: Event) => {
@@ -239,6 +242,7 @@ export const G37App = ({ className }: { className?: string }) => {
     return () => { document.removeEventListener("visibilitychange", onVis); off(); };
   }, []);
   const [msgSegment, setMsgSegment] = useState<"chats" | "calls">("chats");
+  const [scheduleOpen, setScheduleOpen] = useState(false);
   const [peerToOpen, setPeerToOpen] = useState<number | null>(null);
   const dmList = useDms();
   const myIdForDm = state?.me?.id;
@@ -651,38 +655,17 @@ export const G37App = ({ className }: { className?: string }) => {
   const renderAccueil = () => (
     <HomeView state={state} lang={lang} todo={homeTodo} boss={isBoss} canBossView={me.role === "admin" || me.jobRole === "superviseur"}
       onOpenMachine={(no) => { setTab("machines"); setOpenMachine(no); setQ(""); window.scrollTo(0, 0); }}
-      goto={goto} prod={isProd} unread={dmUnreadTotal} actions={homeActions} onMessages={openChats} />
+      goto={goto} prod={isProd} unread={dmUnreadTotal} actions={homeActions} onMessages={openChats}
+      onSchedule={g37.canScheduleMaint(me) ? () => setScheduleOpen(true) : undefined}
+      onWorkLog={g37.canSeeWorkLog(me) ? () => goto("realises") : undefined} />
   );
 
   /* ---------- Machines ---------- */
+  // Salle des métiers en direct (27/10/2026).
   const renderMachineList = () => (
-    <div className={styles.stack}>
-      <div className={styles.head}><h1 className={styles.title}>{t(`Les ${machines.length} métiers`, `The ${machines.length} machines`)}</h1><p className={styles.sub}>{t("Groupes A à E du manuel G37", "Groups A to E of the G37 manual")}</p></div>
-      {g37.GROUPS.map((grp) => {
-        const sp = specsOf(grp.from);
-        return (
-          <div key={grp.id}>
-            <div className={styles.row} style={{ marginBottom: 8 }}>
-              <span className={styles.eyebrow}>{t("Groupe", "Group")} {grp.id} · M/C {grp.from} {t("à", "to")} {grp.to}</span>
-              <Pill>Ring {sp.ring}</Pill><Pill>ACL {sp.acl}</Pill>
-            </div>
-            <div className={styles.machines}>
-              {machines.filter((m) => m.no >= grp.from && m.no <= grp.to).map((m) => {
-                const f = openFaults.filter((x) => x.machineNo === m.no).length;
-                return (
-                  <button key={m.no} className={styles.mcard} onClick={() => { setOpenMachine(m.no); setEditSpecs(false); }}>
-                    <span className={styles.mcardNo}>M/C {m.no}</span>
-                    <span className={styles.mcardSub}>G Z {m.runG ?? "—"} · H Z {m.runH ?? "—"} · Draft {(() => { const dr = g37.draftOf(m.runG, m.runH); return dr ? nf(dr) : "—"; })()}</span>
-                    <Pill tone={g37.M_STATUS[m.status]?.tone}>{statusName(m.status, g37.M_STATUS[m.status]?.n ?? m.status)}{m.stopReason ? ` · ${stopReasonName(m.stopReason)}` : ""}</Pill>
-                    {f > 0 && <Pill tone="crit">{f} {t("panne", "fault")}{plural(f)}</Pill>}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
+    <MachinesLive state={state} lang={lang} onOpen={(no) => { setOpenMachine(no); setEditSpecs(false); window.scrollTo(0, 0); }}
+      groupTags={(from) => { const sp = specsOf(from); return [`Ring ${sp.ring}`, `ACL ${sp.acl}`]; }}
+      statusName={(code) => statusName(code, g37.M_STATUS[code]?.n ?? code)} stopReasonName={(code) => stopReasonName(code) ?? code} />
   );
 
   const renderMachine = (no: number) => {
@@ -1994,7 +1977,7 @@ export const G37App = ({ className }: { className?: string }) => {
     ? allowedTabs.map((k) => TABS.find(([key]) => key === k)).filter((x): x is [string, string, string] => !!x)
     : TABS.filter(([key]) => key === "ia" ? !me.pending : key === "acces" ? me.id === g37.OWNER_USER_ID : true))
     .filter(([key]) => key !== "discussion" || g37.canChat(me));
-  const special = ["parametres", "profil", "guide", "indicateurs"];
+  const special = ["parametres", "profil", "guide", "indicateurs", ...(g37.canSeeWorkLog(me) ? ["realises"] : [])];
   const activeTab = special.includes(tab) ? tab : visibleTabs.some(([key]) => key === tab) ? tab : (visibleTabs[0]?.[0] ?? "accueil");
 
   // Menus regroupés : chaque onglet garde ses propres droits, seul l'affichage est regroupé.
@@ -2033,6 +2016,7 @@ export const G37App = ({ className }: { className?: string }) => {
           openPeer={peerToOpen} onPeerOpened={() => setPeerToOpen(null)} />
       );
       case "guide": return <ConnectGuide state={state} lang={lang} onBack={() => goto("parametres")} />;
+      case "realises": return <WorkLogView state={state} lang={lang} onBack={() => goto("accueil")} onOpenMachine={(no) => { setTab("machines"); setOpenMachine(no); window.scrollTo(0, 0); }} />;
       case "indicateurs": return <IndicatorsView state={state} lang={lang} onBack={() => goto("accueil")} onOpenMachine={(no) => { setTab("machines"); setOpenMachine(no); window.scrollTo(0, 0); }} />;
       case "ia": return renderAssistant();
       case "parametres": return <SettingsView state={state} lang={lang} setLang={setLang} onBack={() => goto("accueil")} onGuide={() => goto("guide")} />;
@@ -2081,6 +2065,7 @@ export const G37App = ({ className }: { className?: string }) => {
   // Une icône propre à chaque entrée du menu Plus.
   const MORE_ICON: Record<string, string> = {
     indicateurs: "M4 20V10M10 20V4M16 20v-7M22 20H2",
+    realises: "M9 5h6M9 3h6v4H9zM6 5H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-1M8 13l2 2 5-5",
     "g-entretien": "M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
     maintenance: "M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z",
     graissage: "M12 2.7c3 3.4 6 6.9 6 10.3a6 6 0 0 1-12 0c0-3.4 3-6.9 6-10.3z",
@@ -2263,6 +2248,12 @@ export const G37App = ({ className }: { className?: string }) => {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 19.5h.01M2 9a14 14 0 0 1 20 0" /></svg>
               <span>{t("Connexion sans Internet", "Offline connection")}</span>
             </button>
+            {g37.canSeeWorkLog(me) && (
+              <button className={styles.moreItem} onClick={() => { setMoreOpen(false); goto("realises"); }}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={MORE_ICON.realises} /></svg>
+                <span>{t("Travaux effectués", "Work done")}</span>
+              </button>
+            )}
             {(!restricted || can("faults")) && (
               <button className={styles.moreItem} onClick={() => { setMoreOpen(false); goto("indicateurs"); }}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={MORE_ICON.indicateurs} /></svg>
@@ -2283,6 +2274,7 @@ export const G37App = ({ className }: { className?: string }) => {
         </DialogContent>
       </Dialog>
 
+      {g37.canScheduleMaint(me) && <MaintScheduleDialog open={scheduleOpen} onOpenChange={setScheduleOpen} state={state} lang={lang} save={save} />}
       <MaintChecklistDialog open={checklistFor !== null} onOpenChange={(o) => { if (!o) setChecklistFor(null); }} machineNo={checklistFor}
         state={state} lang={lang} canEditTemplate={can("specs")} save={save} />
     </div>

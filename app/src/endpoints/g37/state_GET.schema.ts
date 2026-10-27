@@ -33,6 +33,10 @@ export type G37Machine = {
   stoppedSince: Date | null;
   lastMaintenance: Date | null;
   nextMaintenance: Date | null;
+  // Maintenance programmée par le superviseur (27/10/2026).
+  plannedBy?: string | null;
+  plannedAt?: Date | null;
+  planNote?: string | null;
 };
 
 export type G37Gear = { gearType: string; teeth: number; stock: number };
@@ -71,6 +75,7 @@ export type G37Work = {
   auto: boolean;
   authorName: string | null;
   doneByName: string | null;
+  doneAt?: Date | null;
   createdAt: Date;
 };
 

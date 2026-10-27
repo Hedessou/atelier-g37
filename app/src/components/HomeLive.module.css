@@ -172,3 +172,20 @@
   .rise, .mChip, .row, .tilePulse, .blobA, .blobB, .blobC, .chipLive .dot { animation: none; }
   .ringSeg, .reveal { transition: none; }
 }
+
+/* ---------- Maintenance programmée (27/10/2026) ---------- */
+.plan { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.plan .panelTitle { display: inline-flex; align-items: center; gap: 8px; }
+.plan .panelTitle svg { color: var(--hl-warn); }
+.planCall { border-color: rgba(251, 191, 36, 0.45); animation: rise 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both, callGlow 2.6s ease-in-out 600ms infinite; }
+@keyframes callGlow { 0%, 100% { box-shadow: 0 12px 32px rgba(3, 8, 20, 0.35), 0 0 0 0 rgba(251, 191, 36, 0); } 50% { box-shadow: 0 12px 32px rgba(3, 8, 20, 0.35), 0 0 0 4px rgba(251, 191, 36, 0.28); } }
+.planRow { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+.planDay { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--hl-dim); }
+.planChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.planChip { min-height: 38px; padding: 0 12px; border-radius: 12px; border: 1px solid rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.12); color: #fde68a; font-family: var(--font-family-monospace, monospace); font-weight: 600; font-size: 0.9rem; cursor: pointer; animation: rise 360ms ease both; transition: transform 120ms ease; }
+.planChip:active { transform: scale(0.94); }
+.planBy { font-size: 0.78rem; color: var(--hl-dim); overflow-wrap: anywhere; }
+.planEmpty { margin: 0; font-size: 0.88rem; color: var(--hl-dim); }
+.planBtn { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 52px; border-radius: 16px; border: 0; background: linear-gradient(140deg, #f59e0b, #f97316); color: #1a1205; font: inherit; font-weight: 700; font-size: 0.95rem; cursor: pointer; transition: transform 120ms ease; }
+.planBtn:active { transform: scale(0.97); }
+@media (prefers-reduced-motion: reduce) { .planCall, .planChip { animation: none; } }

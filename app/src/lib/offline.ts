@@ -207,7 +207,7 @@ export function applyLocal(state: State, op: Pick<Op, "opId" | "clientAt" | "inp
       return s;
     case "workDone":
       if (!need("works")) return state;
-      s.works = s.works.map((w) => w.id === input.id ? { ...w, status: "done", doneByName: me.displayName } : w);
+      s.works = s.works.map((w) => w.id === input.id ? { ...w, status: "done", doneByName: me.displayName, doneAt: now } : w);
       return s;
     case "faultAdd":
       if (!need("faultReport")) return state;
@@ -251,14 +251,20 @@ export function applyLocal(state: State, op: Pick<Op, "opId" | "clientAt" | "inp
     }
     case "maintPlan":
       if (!need("maint")) return state;
-      s.machines = s.machines.map((m) => m.no === input.machineNo ? { ...m, nextMaintenance: input.next } : m);
+      s.machines = s.machines.map((m) => m.no === input.machineNo ? { ...m, nextMaintenance: input.next, plannedBy: null, plannedAt: null, planNote: null } : m);
       return s;
+    case "maintSchedule": {
+      if (!g37.canScheduleMaint(me)) return state;
+      const day = new Date(`${input.day}T00:00:00Z`);
+      s.machines = s.machines.map((m) => input.machines.includes(m.no) ? { ...m, nextMaintenance: day, plannedBy: me.displayName, plannedAt: now, planNote: input.note ?? null } : m);
+      return s;
+    }
     case "maintDone": {
       if (!need("maint")) return state;
       const next = new Date(now.getTime() + 30 * 86400000);
       const cl = input.checklist;
       const doneCount = cl ? cl.items.filter((i) => i.done).length : 0;
-      s.machines = s.machines.map((m) => m.no === input.machineNo ? { ...m, lastMaintenance: now, nextMaintenance: next } : m);
+      s.machines = s.machines.map((m) => m.no === input.machineNo ? { ...m, lastMaintenance: now, nextMaintenance: next, plannedBy: null, plannedAt: null, planNote: null } : m);
       s.maintenance = [{ id: localId, machineNo: input.machineNo, maintenanceType: "Visite périodique", performedAt: now, nextDue: next, technician: me.displayName,
         notes: cl ? `Check-list : ${doneCount}/${cl.items.length} étape(s) faite(s)` : null }, ...s.maintenance];
       if (cl) {
