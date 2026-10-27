@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { sql as ksql } from "kysely";
 import { compare, hash } from "bcryptjs";
-import { db } from "../lib/db.ts";
+import { db, sql } from "../lib/db.ts";
+import { sendMail, smtpConfig } from "../lib/mail.ts";
 import { createSession, getServerUserSession, NotAuthenticatedError, sha256, tokenOf } from "../lib/session.ts";
 import { readSuperjson, sj } from "../lib/http.ts";
 
@@ -99,4 +100,92 @@ export async function handleChangePassword(request: Request): Promise<Response> 
     if (error instanceof NotAuthenticatedError) return sj({ message: "Authentification requise" }, 401);
     return sj({ message: error instanceof Error ? error.message : "Changement impossible" }, 400);
   }
+}
+
+// ---------- Mot de passe oublié : code à 6 chiffres envoyé par e-mail (27/10/2026) ----------
+const RESET = { validMinutes: 15, maxAttempts: 5, maxPerWindow: 3, windowMinutes: 15 };
+const forgotSchema = z.object({ email: z.string().email("E-mail invalide") });
+const resetSchema = z.object({
+  email: z.string().email("E-mail invalide"),
+  code: z.string().regex(/^\d{6}$/, "Le code contient 6 chiffres"),
+  password: z.string().min(8, "8 caractères minimum"),
+  device: z.string().max(120).optional(),
+});
+const SENT_MSG = "Si un compte existe avec cet e-mail, un code vient d'y être envoyé. Regarde aussi dans les spams.";
+
+function sixDigits(): string {
+  const n = new Uint32Array(1);
+  crypto.getRandomValues(n);
+  return String(n[0] % 1000000).padStart(6, "0");
+}
+
+function resetMail(name: string, code: string) {
+  const text = `Bonjour ${name},\n\nTon code pour choisir un nouveau mot de passe dans l'app Spinning R/F (Atelier G37) :\n\n${code}\n\nIl est valable ${RESET.validMinutes} minutes. Si tu n'as rien demandé, ignore ce message : ton mot de passe ne change pas.\n\n— Spinning R/F`;
+  const html = `<!doctype html><html><body style="margin:0;background:#0f1b2d;font-family:Arial,Helvetica,sans-serif;color:#e8eef6">
+<div style="max-width:480px;margin:0 auto;padding:28px 20px">
+<div style="display:inline-block;background:#f59e0b;color:#1a1205;font-weight:700;border-radius:10px;padding:8px 10px;font-family:monospace">R/F</div>
+<h1 style="font-size:20px;margin:18px 0 6px">Récupération de ton compte</h1>
+<p style="color:#9fb0c6;line-height:1.5;margin:0 0 18px">Bonjour ${name.replace(/[<>&]/g, "")}, voici ton code pour choisir un nouveau mot de passe dans l'app Spinning R/F.</p>
+<div style="background:#16263d;border:1px solid #2a3d58;border-radius:16px;padding:18px;text-align:center">
+<div style="font-family:monospace;font-size:34px;letter-spacing:8px;font-weight:700;color:#fbbf24">${code}</div>
+<div style="color:#9fb0c6;font-size:13px;margin-top:8px">Valable ${RESET.validMinutes} minutes</div></div>
+<p style="color:#9fb0c6;font-size:13px;line-height:1.5;margin:18px 0 0">Si tu n'as rien demandé, ignore ce message : ton mot de passe ne change pas.</p>
+</div></body></html>`;
+  return { text, html };
+}
+
+export async function handleForgotPassword(request: Request): Promise<Response> {
+  let email: string;
+  try { email = forgotSchema.parse(await readSuperjson(request)).email.trim().toLowerCase(); } catch { return sj({ message: "E-mail invalide" }, 400); }
+  const conf = await smtpConfig();
+  if (!conf) return sj({ message: "La récupération par e-mail n'est pas encore activée. Demande à l'administrateur de réinitialiser ton mot de passe." }, 503);
+  const since = new Date(Date.now() - RESET.windowMinutes * 60000);
+  const [{ n }] = await sql`SELECT count(*)::int AS n FROM password_resets WHERE lower(email) = ${email} AND created_at >= ${since}`;
+  if (n >= RESET.maxPerWindow) return sj({ message: `Trop de demandes. Réessaie dans ${RESET.windowMinutes} minutes.` }, 429);
+  const user = await db.selectFrom("users").select(["id", "email", "displayName", "firstName"]).where(ksql`lower(email)`, "=", email).executeTakeFirst();
+  if (!user) return sj({ success: true, message: SENT_MSG });
+  const code = sixDigits();
+  const codeHash = await sha256(`${user.id}:${code}`);
+  const [row] = await sql`INSERT INTO password_resets (user_id, email, code_hash, expires_at)
+    VALUES (${user.id}, ${email}, ${codeHash}, ${new Date(Date.now() + RESET.validMinutes * 60000)}) RETURNING id`;
+  try {
+    const name = (user.firstName || user.displayName || "").trim().split(/\s+/)[0] || "";
+    const { text, html } = resetMail(name, code);
+    await sendMail(conf, { to: user.email, subject: `Ton code Spinning R/F : ${code}`, text, html });
+  } catch (error) {
+    console.error("Mot de passe oublié — envoi :", error);
+    await sql`DELETE FROM password_resets WHERE id = ${row.id}`;
+    return sj({ message: "L'e-mail n'a pas pu partir. Réessaie dans quelques minutes ou demande à l'administrateur." }, 502);
+  }
+  return sj({ success: true, message: SENT_MSG });
+}
+
+export async function handleResetPassword(request: Request): Promise<Response> {
+  let input: z.infer<typeof resetSchema>;
+  try { input = resetSchema.parse(await readSuperjson(request)); } catch (e) {
+    const msg = e instanceof z.ZodError ? e.issues[0]?.message : null;
+    return sj({ message: msg || "Données invalides" }, 400);
+  }
+  const email = input.email.trim().toLowerCase();
+  const [reset] = await sql`SELECT id, user_id, code_hash, expires_at, attempts FROM password_resets
+    WHERE lower(email) = ${email} AND used_at IS NULL ORDER BY created_at DESC LIMIT 1`;
+  if (!reset || new Date(reset.expires_at).getTime() < Date.now()) return sj({ message: "Code expiré ou inconnu. Demande un nouveau code." }, 400);
+  if (reset.attempts >= RESET.maxAttempts) return sj({ message: "Trop d'essais avec ce code. Demande un nouveau code." }, 429);
+  if ((await sha256(`${reset.user_id}:${input.code}`)) !== reset.code_hash) {
+    await sql`UPDATE password_resets SET attempts = attempts + 1 WHERE id = ${reset.id}`;
+    const left = RESET.maxAttempts - reset.attempts - 1;
+    return sj({ message: left > 0 ? `Code incorrect. Encore ${left} essai${left > 1 ? "s" : ""}.` : "Code incorrect. Demande un nouveau code." }, 400);
+  }
+  const userId = reset.user_id as number;
+  const passwordHash = await hash(input.password, 10);
+  const has = await db.selectFrom("userPasswords").select("userId").where("userId", "=", userId).executeTakeFirst();
+  if (has) await db.updateTable("userPasswords").set({ passwordHash, createdAt: new Date() }).where("userId", "=", userId).execute();
+  else await db.insertInto("userPasswords").values({ userId, passwordHash }).execute();
+  await sql`UPDATE password_resets SET used_at = now() WHERE user_id = ${userId} AND used_at IS NULL`;
+  // Toutes les anciennes connexions sont coupées : seul ce téléphone reste connecté.
+  await db.deleteFrom("appSessions").where("userId", "=", userId).execute();
+  await db.deleteFrom("loginAttempts").where("email", "=", email).execute();
+  const user = await db.selectFrom("users").select(["id", "email", "displayName", "avatarUrl", "role"]).where("id", "=", userId).executeTakeFirst();
+  const token = await createSession(userId, input.device ?? null);
+  return sj({ user, token });
 }

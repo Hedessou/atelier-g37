@@ -1,5 +1,5 @@
 {
   "nativeVersionCode": 5,
   "minNativeVersionCode": 4,
-  "notes": "Mise à jour : tous les menus passent au style verre givré de l'accueil (fond lumineux, cartes en verre, écrans qui s'animent). La liaison sans Internet (Bluetooth / Wi-Fi) devient facultative : coupée par défaut, l'app ne touche plus au Bluetooth ; chacun peut l'activer dans Paramètres → Synchronisation."
+  "notes": "Mot de passe oublié : sur l'écran de connexion, « Mot de passe oublié ? » envoie un code à 6 chiffres par e-mail pour choisir un nouveau mot de passe. Tous les menus en verre givré ; liaison Bluetooth / Wi-Fi facultative (Paramètres → Synchronisation)."
 }

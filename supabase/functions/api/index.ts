@@ -1,6 +1,6 @@
 // Serveur de l'app Atelier G37 (Supabase Edge Function « api »).
 import { CORS, json, withCors } from "./lib/http.ts";
-import { handleChangePassword, handleLogin, handleLogout, handleRegister, handleSession } from "./routes/auth.ts";
+import { handleChangePassword, handleForgotPassword, handleLogin, handleLogout, handleRegister, handleResetPassword, handleSession } from "./routes/auth.ts";
 import { handleState } from "./routes/state.ts";
 import { handleMutate, handleSync } from "./routes/mutate.ts";
 import { handleCalc, handlePayments, handlePaymentDecide, handlePayNetworks, handleQuota, handleSubscribe, handleUserLimits } from "./routes/billing.ts";
@@ -21,6 +21,8 @@ const ROUTES: Record<string, Handler> = {
   "POST auth/register_with_password": handleRegister,
   "POST auth/logout": handleLogout,
   "POST auth/change_password": handleChangePassword,
+  "POST auth/forgot_password": handleForgotPassword,
+  "POST auth/reset_password": handleResetPassword,
   "GET g37/state": handleState,
   "POST g37/mutate": handleMutate,
   "POST g37/sync": handleSync,
