@@ -37,5 +37,5 @@
 .ev:last-child::before { display: none; }
 
 /* Verre givré, comme l'accueil (27/10/2026) */
-.card { background: var(--g-glass, var(--g-surface)); border: 1px solid var(--g-line); box-shadow: var(--g-glass-shadow, none); border-radius: 20px; -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); }
+.card { background: var(--g-glass, var(--g-surface)); border: 1px solid var(--g-line); box-shadow: var(--g-glass-shadow, none); border-radius: 20px; }
 .kpi { background: rgba(255, 255, 255, 0.06); }

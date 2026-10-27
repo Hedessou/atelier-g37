@@ -29,9 +29,7 @@
 .glass {
   background: linear-gradient(140deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035));
   border: 1px solid rgba(255, 255, 255, 0.13);
-  box-shadow: 0 12px 32px rgba(3, 8, 20, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
-  backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: 0 4px 12px rgba(3, 8, 20, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   border-radius: 22px;
 }
 
@@ -46,9 +44,9 @@
 .hello { margin: 4px 0 0; font-size: 1.65rem; font-weight: 700; letter-spacing: -0.01em; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; padding: 0 14px; border-radius: 999px; font-size: 0.85rem; color: #dbe5f1;
-  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.12); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+  background: rgba(255, 255, 255, 0.07); border: 1px solid rgba(255, 255, 255, 0.12); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hl-dim); flex: none; }
-.chipLive .dot { background: var(--hl-ok); box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.6); animation: live 2s ease-out infinite; }
+.chipLive .dot { background: var(--hl-ok); box-shadow: 0 0 6px rgba(52, 211, 153, 0.8); }
 @keyframes live { 0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55); } 80%, 100% { box-shadow: 0 0 0 9px rgba(52, 211, 153, 0); } }
 
 /* ---------- Métiers ---------- */
@@ -94,14 +92,14 @@
 .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .tile { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 152px; padding: 16px; color: inherit; font: inherit; text-align: left; cursor: pointer;
   transition: transform 140ms ease, border-color 200ms ease, box-shadow 200ms ease; overflow: hidden; }
-.tile::after { content: ""; position: absolute; inset: auto -30% -60% auto; width: 140px; height: 140px; border-radius: 50%; opacity: 0.35; filter: blur(30px); pointer-events: none; }
+.tile::after { content: ""; position: absolute; inset: auto -30% -60% auto; width: 140px; height: 140px; border-radius: 50%; opacity: 0.32; pointer-events: none; }
 .tile:active { transform: scale(0.96); }
 .tileOn { border-color: rgba(255, 255, 255, 0.35); transform: translateY(-2px); }
-.tile_crit::after { background: var(--hl-crit); }
-.tile_warn::after { background: var(--hl-warn); }
-.tile_ok::after { background: var(--hl-ok); opacity: 0.18; }
-.tile_info::after { background: var(--hl-info); }
-.tilePulse { animation: glow 2.4s ease-in-out infinite; }
+.tile_crit::after { background: radial-gradient(circle, var(--hl-crit), transparent 70%); }
+.tile_warn::after { background: radial-gradient(circle, var(--hl-warn), transparent 70%); }
+.tile_ok::after { background: radial-gradient(circle, var(--hl-ok), transparent 70%); opacity: 0.18; }
+.tile_info::after { background: radial-gradient(circle, var(--hl-info), transparent 70%); }
+.tilePulse { border-color: rgba(251, 113, 133, 0.45); }
 @keyframes glow { 0%, 100% { box-shadow: 0 12px 32px rgba(3, 8, 20, 0.35), 0 0 0 0 rgba(251, 113, 133, 0); } 50% { box-shadow: 0 12px 32px rgba(3, 8, 20, 0.35), 0 0 0 3px rgba(251, 113, 133, 0.35); } }
 .tileIco { width: 40px; height: 40px; border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 6px; }
 .i_crit { background: rgba(251, 113, 133, 0.18); color: var(--hl-crit); }
@@ -177,7 +175,7 @@
 .plan { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .plan .panelTitle { display: inline-flex; align-items: center; gap: 8px; }
 .plan .panelTitle svg { color: var(--hl-warn); }
-.planCall { border-color: rgba(251, 191, 36, 0.45); animation: rise 520ms cubic-bezier(0.2, 0.8, 0.2, 1) both, callGlow 2.6s ease-in-out 600ms infinite; }
+.planCall { border-color: rgba(251, 191, 36, 0.55); }
 @keyframes callGlow { 0%, 100% { box-shadow: 0 12px 32px rgba(3, 8, 20, 0.35), 0 0 0 0 rgba(251, 191, 36, 0); } 50% { box-shadow: 0 12px 32px rgba(3, 8, 20, 0.35), 0 0 0 4px rgba(251, 191, 36, 0.28); } }
 .planRow { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
 .planDay { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--hl-dim); }

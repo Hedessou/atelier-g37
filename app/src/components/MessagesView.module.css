@@ -150,7 +150,7 @@
 .viewerClose svg { width: 20px; height: 20px; }
 
 /* Verre givré, comme l'accueil (27/10/2026) */
-.groupCard { background: var(--g-glass, var(--g-surface)); border: 1px solid var(--g-line); box-shadow: var(--g-glass-shadow, none); border-radius: 20px; -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); }
+.groupCard { background: var(--g-glass, var(--g-surface)); border: 1px solid var(--g-line); box-shadow: var(--g-glass-shadow, none); border-radius: 20px; }
 .tabs { background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); }
 .tabOn { background: rgba(245, 158, 11, 0.18); color: #fde68a; }
 .sheet, .attachSheet { background: var(--g-solid, #16263d); }

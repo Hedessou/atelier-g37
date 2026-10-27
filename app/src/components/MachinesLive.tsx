@@ -3,78 +3,86 @@ import type { OutputType as State } from "../endpoints/g37/state_GET.schema";
 import { g37 } from "../helpers/g37";
 import styles from "./MachinesLive.module.css";
 
-// Salle des métiers « en direct » (27/10/2026) : les broches tournent sur les métiers en marche,
-// le fil défile ; un métier arrêté s'éteint en rouge avec son chrono qui court ; la maintenance
-// fait tourner l'engrenage. Fil d'actualité en haut, filtres, toucher un métier ouvre sa fiche.
+// Salle des métiers en direct — version allégée (27/10/2026, retour : « animation moche, app lente »).
+// Plus de broches animées ni de flou : des tuiles nettes, une fine ligne qui défile sur les métiers
+// en marche (une seule animation légère), le chrono des arrêts. Seuls l'horloge et les chronos
+// se mettent à jour chaque seconde, pas toute la liste.
 
 type Props = {
   state: State;
   lang: "fr" | "en";
   onOpen: (no: number) => void;
-  groupTags: (from: number) => string[];   // ex. « Ring 36 mm », « ACL 160 mm »
+  groupTags: (from: number) => string[];
   statusName: (code: string) => string;
   stopReasonName: (code: string) => string;
 };
 
 const H = 3600000;
 const pad = (n: number) => String(n).padStart(2, "0");
-const chrono = (ms: number) => {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  const h = Math.floor(s / 3600);
-  return h >= 48 ? `${Math.floor(h / 24)} j ${pad(h % 24)} h` : `${pad(h)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
-};
-const ago = (ms: number, fr: boolean) => {
-  const m = Math.max(1, Math.round(ms / 60000));
-  if (m < 60) return fr ? `il y a ${m} min` : `${m} min ago`;
-  const h = Math.round(m / 60);
-  return fr ? `il y a ${h} h` : `${h} h ago`;
-};
-const SPINDLES = [12, 31, 50, 69, 88, 107];
-
 type Filter = "all" | "service" | "arret" | "maintenance";
+
+function useTick(ms: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
+}
+
+const Clock = () => {
+  const now = useTick(1000);
+  const d = new Date(now + H);
+  return <span className={styles.clock}>{pad(d.getUTCHours())}:{pad(d.getUTCMinutes())}:{pad(d.getUTCSeconds())}</span>;
+};
+
+const Chrono = ({ since }: { since: string | Date }) => {
+  const now = useTick(1000);
+  const s = Math.max(0, Math.floor((now - new Date(since).getTime()) / 1000));
+  const h = Math.floor(s / 3600);
+  const txt = h >= 48 ? `${Math.floor(h / 24)} j ${pad(h % 24)} h` : `${pad(h)}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
+  return <span className={styles.chrono}>{txt}</span>;
+};
 
 export function MachinesLive({ state, lang, onOpen, groupTags, statusName, stopReasonName }: Props) {
   const fr = lang === "fr";
   const t = (a: string, b: string) => (fr ? a : b);
-  const [now, setNow] = useState(() => Date.now());
   const [filter, setFilter] = useState<Filter>("all");
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
+  const minute = useTick(60000);   // badges « aujourd'hui / demain » et fil récent
 
   const machines = state.machines;
-  const openFaults = (state.failures ?? []).filter((f) => f.status !== "resolue");
-  const faultOn = new Map<number, number>();
-  openFaults.forEach((f) => faultOn.set(f.machineNo, (faultOn.get(f.machineNo) ?? 0) + 1));
+  const faultOn = useMemo(() => {
+    const m = new Map<number, number>();
+    (state.failures ?? []).filter((f) => f.status !== "resolue").forEach((f) => m.set(f.machineNo, (m.get(f.machineNo) ?? 0) + 1));
+    return m;
+  }, [state.failures]);
   const running = machines.filter((m) => m.status === "service").length;
   const stopped = machines.filter((m) => m.status === "arret").length;
   const maint = machines.filter((m) => m.status === "maintenance").length;
   const pct = machines.length ? Math.round((running / machines.length) * 100) : 0;
-  const local = new Date(now + H);
-  const clock = `${pad(local.getUTCHours())}:${pad(local.getUTCMinutes())}:${pad(local.getUTCSeconds())}`;
-  const todayIso = local.toISOString().slice(0, 10);
-  const tomorrowIso = new Date(now + H + 86400000).toISOString().slice(0, 10);
+  const todayIso = new Date(minute + H).toISOString().slice(0, 10);
+  const tomorrowIso = new Date(minute + H + 86400000).toISOString().slice(0, 10);
 
-  // Fil en direct : ce qui s'est passé ces dernières 24 h.
-  const feed = useMemo(() => {
-    const since = Date.now() - 24 * H;
+  // Les 3 derniers événements des 24 h (liste fixe, pas de défilement).
+  const recent = useMemo(() => {
+    const since = minute - 24 * H;
     const items: Array<{ at: number; text: string; tone: "crit" | "ok" | "warn" }> = [];
     for (const f of state.failures ?? []) {
       const o = new Date(f.openedAt).getTime();
-      if (o > since) items.push({ at: o, tone: "crit", text: `M/C ${pad(f.machineNo)} · ${t("panne", "fault")} : ${f.issue}` });
-      if (f.resolvedAt && new Date(f.resolvedAt).getTime() > since) items.push({ at: new Date(f.resolvedAt).getTime(), tone: "ok", text: `M/C ${pad(f.machineNo)} · ${t("réparée", "fixed")}${f.fixedBy ? ` ${t("par", "by")} ${f.fixedBy}` : ""}` });
+      if (o > since) items.push({ at: o, tone: "crit", text: `M/C ${pad(f.machineNo)} · ${f.issue}` });
+      if (f.resolvedAt && new Date(f.resolvedAt).getTime() > since) items.push({ at: new Date(f.resolvedAt).getTime(), tone: "ok", text: `M/C ${pad(f.machineNo)} · ${t("réparée", "fixed")}` });
     }
     for (const c of state.checklists ?? []) {
       const at = new Date(c.doneAt).getTime();
-      if (at > since) items.push({ at, tone: "warn", text: `M/C ${pad(c.machineNo)} · ${t("maintenance faite", "maintenance done")}${c.authorName ? ` ${t("par", "by")} ${c.authorName}` : ""}` });
+      if (at > since) items.push({ at, tone: "warn", text: `M/C ${pad(c.machineNo)} · ${t("maintenance faite", "maintenance done")}` });
     }
-    for (const w of state.works ?? []) {
-      if (w.status === "done" && w.doneAt && new Date(w.doneAt).getTime() > since) items.push({ at: new Date(w.doneAt).getTime(), tone: "ok", text: `M/C ${pad(w.machineNo)} · ${w.title}` });
-    }
-    return items.sort((a, b) => b.at - a.at).slice(0, 12);
+    return items.sort((a, b) => b.at - a.at).slice(0, 3);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.failures, state.checklists, state.works, lang]);
+  }, [state.failures, state.checklists, minute, lang]);
+  const ago = (at: number) => {
+    const m = Math.max(1, Math.round((minute - at) / 60000));
+    return m < 60 ? `${m} min` : `${Math.round(m / 60)} h`;
+  };
 
   const FILTERS: Array<{ k: Filter; label: string; n: number; tone: string }> = [
     { k: "all", label: t("Tous", "All"), n: machines.length, tone: "" },
@@ -91,25 +99,25 @@ export function MachinesLive({ state, lang, onOpen, groupTags, statusName, stopR
             <div className={styles.live}><span className={styles.liveDot} /> {t("EN DIRECT", "LIVE")}</div>
             <h1 className={styles.h1}>{t("Salle des métiers", "Machine floor")}</h1>
           </div>
-          <div className={styles.clock} aria-label={t("Heure", "Time")}>{clock}</div>
+          <Clock />
         </div>
-        <div className={styles.gauge} aria-label={t(`${pct} % des métiers tournent`, `${pct}% of machines running`)}>
-          <div className={styles.gaugeFill} style={{ width: `${pct}%` }}><span className={styles.gaugeShine} /></div>
+        <div className={styles.gauge} aria-hidden="true">
+          {running > 0 && <span className={styles.gOk} style={{ flex: running }} />}
+          {stopped > 0 && <span className={styles.gCrit} style={{ flex: stopped }} />}
+          {maint > 0 && <span className={styles.gWarn} style={{ flex: maint }} />}
         </div>
-        <div className={styles.gaugeLegend}>
-          <span><strong className={styles.okTxt}>{running}</strong> {t("tournent", "running")}</span>
-          <span><strong className={styles.critTxt}>{stopped}</strong> {t("arrêtés", "stopped")}</span>
-          <span><strong className={styles.warnTxt}>{maint}</strong> {t("en maintenance", "in maintenance")}</span>
+        <div className={styles.legend}>
+          <span><b className={styles.okTxt}>{running}</b> {t("en marche", "running")}</span>
+          <span><b className={styles.critTxt}>{stopped}</b> {t("à l'arrêt", "stopped")}</span>
+          <span><b className={styles.warnTxt}>{maint}</b> {t("maintenance", "maintenance")}</span>
           <span className={styles.pct}>{pct} %</span>
         </div>
-        {feed.length > 0 && (
-          <div className={styles.ticker} aria-label={t("Fil en direct", "Live feed")}>
-            <div className={styles.tickerTrack} style={{ animationDuration: `${Math.max(18, feed.length * 7)}s` }}>
-              {[...feed, ...feed].map((f, i) => (
-                <span key={i} className={styles.tick}><i className={styles[`d_${f.tone}`]} />{f.text} <em>{ago(now - f.at, fr)}</em></span>
-              ))}
-            </div>
-          </div>
+        {recent.length > 0 && (
+          <ul className={styles.recent}>
+            {recent.map((r, i) => (
+              <li key={i}><i className={styles[`d_${r.tone}`]} /><span>{r.text}</span><em>{ago(r.at)}</em></li>
+            ))}
+          </ul>
         )}
       </section>
 
@@ -131,47 +139,33 @@ export function MachinesLive({ state, lang, onOpen, groupTags, statusName, stopR
               {groupTags(grp.from).map((x) => <span key={x} className={styles.tag}>{x}</span>)}
             </div>
             <div className={styles.grid}>
-              {list.map((m, i) => {
+              {list.map((m) => {
                 const st = m.status === "arret" ? "stop" : m.status === "maintenance" ? "maint" : "run";
                 const faults = faultOn.get(m.no) ?? 0;
-                const since = m.stoppedSince ? now - new Date(m.stoppedSince).getTime() : null;
                 const nextIso = m.nextMaintenance ? new Date(m.nextMaintenance).toISOString().slice(0, 10) : null;
                 const plan = m.plannedBy && nextIso ? (nextIso === todayIso ? t("Maint. aujourd'hui", "Maint. today") : nextIso === tomorrowIso ? t("Maint. demain", "Maint. tomorrow") : null) : null;
                 const dr = g37.draftOf(m.runG, m.runH);
-                const speed = 0.55 + ((m.no * 37) % 30) / 100;   // chaque métier a son propre rythme
                 return (
-                  <button key={m.no} type="button" className={`${styles.mc} ${styles[st]}`} onClick={() => onOpen(m.no)}
-                    style={{ animationDelay: `${Math.min(i, 8) * 45}ms`, "--spin": `${speed}s` } as React.CSSProperties}
-                    aria-label={`M/C ${m.no} — ${statusName(m.status)}`}>
+                  <button key={m.no} type="button" className={`${styles.mc} ${styles[st]}`} onClick={() => onOpen(m.no)} aria-label={`M/C ${m.no} — ${statusName(m.status)}`}>
                     <span className={styles.mcTop}>
-                      <span className={styles.mcNo}>M/C {pad(m.no)}</span>
-                      <span className={styles.led} />
+                      <span className={styles.mcNo}>{pad(m.no)}</span>
+                      <span className={styles.state}>{st === "run" ? t("En marche", "Running") : st === "stop" ? t("Arrêt", "Stopped") : t("Maintenance", "Maintenance")}</span>
                     </span>
-                    <svg viewBox="0 0 120 44" className={styles.frame} aria-hidden="true">
-                      <rect x="2" y="3" width="116" height="5" rx="2.5" className={styles.bar} />
-                      {SPINDLES.map((x, k) => (
-                        <g key={x}>
-                          <line x1={x} y1="8" x2={x} y2="19" className={styles.yarn} style={{ animationDelay: `${-k * 0.13}s` }} />
-                          <g transform={`translate(${x} 25)`}>
-                            <circle r="6.5" className={styles.ring} style={{ animationDelay: `${-k * 0.11}s` }} />
-                            <circle r="2.4" className={styles.bobbin} />
-                          </g>
-                        </g>
-                      ))}
-                      <rect x="2" y="34" width="116" height="7" rx="3" className={styles.body} />
-                    </svg>
-                    {st === "maint" && <span className={styles.gear} aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" /></svg></span>}
-                    <span className={styles.mcInfo}>
-                      {st === "run" && <span className={styles.mono}>G {m.runG ?? "—"} · H {m.runH ?? "—"}{dr ? ` · D ${dr.toFixed(2).replace(".", ",")}` : ""}</span>}
-                      {st !== "run" && <span className={styles.why}>{m.stopReason ? stopReasonName(m.stopReason) : statusName(m.status)}</span>}
-                      {st !== "run" && since != null && <span className={styles.chrono}>{chrono(since)}</span>}
-                    </span>
+                    {st === "run" ? (
+                      <span className={styles.data}>G {m.runG ?? "—"} · H {m.runH ?? "—"}{dr ? <><br />Draft {dr.toFixed(2).replace(".", ",")}</> : null}</span>
+                    ) : (
+                      <span className={styles.data}>
+                        <span className={styles.why}>{m.stopReason ? stopReasonName(m.stopReason) : statusName(m.status)}</span>
+                        {m.stoppedSince && <Chrono since={m.stoppedSince} />}
+                      </span>
+                    )}
                     {(faults > 0 || plan) && (
                       <span className={styles.badges}>
                         {faults > 0 && <span className={styles.bFault}>{faults} {t("panne", "fault")}{faults > 1 ? "s" : ""}</span>}
                         {plan && <span className={styles.bPlan}>{plan}</span>}
                       </span>
                     )}
+                    <span className={styles.flow} aria-hidden="true"><span /></span>
                   </button>
                 );
               })}
