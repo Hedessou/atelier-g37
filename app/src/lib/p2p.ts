@@ -519,6 +519,24 @@ export function ensureP2PListeners(): Promise<void> {
   return listenersPromise;
 }
 
+// Liaison sans Internet (Bluetooth / Wi-Fi) : FACULTATIVE depuis le 27/10/2026, éteinte par défaut.
+// Les services Google « à proximité » allument le Bluetooth tant que l'app cherche des collègues :
+// chacun choisit donc dans Paramètres s'il veut l'échange sans Internet sur son téléphone.
+const LINK_KEY = "g37.offlineLink";
+export const offlineLinkChanged = bus<boolean>();
+export function offlineLinkEnabled(): boolean {
+  try { return localStorage.getItem(LINK_KEY) === "1"; } catch { return false; }
+}
+/** Active ou coupe la liaison sans Internet sur ce téléphone. Renvoie l'état final. */
+export async function setOfflineLink(on: boolean, me: { id: number; pending: boolean }): Promise<boolean> {
+  if (on && nearbyAvailable() && !(await requestP2PPermissions())) on = false;
+  try { localStorage.setItem(LINK_KEY, on ? "1" : "0"); } catch { /* stockage indisponible */ }
+  offlineLinkChanged.emit(on);
+  if (on) await startP2P(me);
+  else await stopP2P(true);
+  return on;
+}
+
 // Toujours joignable sans Internet (app fermée) : Paramètres.
 const REACH_KEY = "g37.reachable";
 export function reachableEnabled(): boolean {
@@ -532,6 +550,7 @@ export async function setReachable(on: boolean) {
 export async function startP2P(me: { id: number; pending: boolean }): Promise<void> {
   if (!nearbyAvailable()) return;
   setStatus({ available: true });
+  if (!offlineLinkEnabled()) { setStatus({ needsPermission: false }); return; }
   const perm = await Nearby.checkNearbyPermissions().catch(() => ({ nearby: false, microphone: false }));
   if (!perm.nearby) { setStatus({ needsPermission: true }); return; }
   setStatus({ needsPermission: false });
@@ -551,7 +570,7 @@ export async function startP2P(me: { id: number; pending: boolean }): Promise<vo
 
 // Relance immédiate de la recherche Bluetooth / Wi-Fi (APK 5 ; sinon redémarrage simple).
 export async function quickConnect(me: { id: number; pending: boolean }): Promise<boolean> {
-  if (!nearbyAvailable()) return false;
+  if (!nearbyAvailable() || !offlineLinkEnabled()) return false;
   const perm = await Nearby.checkNearbyPermissions().catch(() => ({ nearby: false, microphone: false }));
   if (!perm.nearby && !(await requestP2PPermissions())) return false;
   if (!started) await startP2P(me);
@@ -567,14 +586,21 @@ export async function quickConnect(me: { id: number; pending: boolean }): Promis
   return true;
 }
 
-export async function stopP2P() {
-  if (!nearbyAvailable() || !started) return;
+/** Coupe la recherche des collègues. `force` : coupe aussi ce qu'une ancienne version a laissé tourner
+ *  (service en arrière-plan, « toujours joignable », point d'accès), même si rien n'a été lancé ici. */
+export async function stopP2P(force = false) {
+  if (!nearbyAvailable() || (!started && !force)) return;
   started = false;
   setStatus({ running: false });
   peers.clear();
   peersChanged.emit([]);
   await Nearby.stop().catch(() => {});
   await Nearby.setBackground({ enabled: false }).catch(() => {});
+  if (force && (await nativeV4Available())) await Nearby.setReachable({ enabled: false }).catch(() => {});
+  if (force && (await nativeV5Available())) {
+    await Nearby.leaveHotspot().catch(() => {});
+    await Nearby.stopHotspot().catch(() => {});
+  }
 }
 
 // ---------- Avec Internet : porter au serveur les actions des collègues ----------

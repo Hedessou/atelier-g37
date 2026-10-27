@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import type { OutputType as State } from "../endpoints/g37/state_GET.schema";
 import { Nearby, explainNearbyError, nativeSoundsAvailable, nativeV4Available, nativeV5Available, nearbyAvailable, type HotspotState, type NearbyError, type NetworkStatus, type SettingKey, type SystemStatus } from "../lib/nearby";
-import { getPeers, peersChanged, quickConnect, reachableEnabled, requestP2PPermissions, setReachable, startP2P, type Peer } from "../lib/p2p";
+import { getPeers, offlineLinkEnabled, peersChanged, quickConnect, reachableEnabled, requestP2PPermissions, setOfflineLink, setReachable, startP2P, type Peer } from "../lib/p2p";
 import styles from "./SettingsView.module.css";
 import g from "./ConnectGuide.module.css";
 
@@ -27,6 +27,7 @@ export const ConnectGuide = ({ state, lang, onBack }: Props) => {
   const [joinOpen, setJoinOpen] = useState(false);
   const [joinSsid, setJoinSsid] = useState("");
   const [joinPass, setJoinPass] = useState("");
+  const [link, setLink] = useState(offlineLinkEnabled());
 
   const refresh = useCallback(async () => {
     const v4 = await nativeV4Available();
@@ -124,6 +125,28 @@ export const ConnectGuide = ({ state, lang, onBack }: Props) => {
     <div className={styles.permRow}>
       <span className={`${styles.dot} ${ok ? styles.dotOk : styles.dotWarn}`} aria-hidden="true" />
       <span className={styles.permText}><strong>{label}</strong>{detail && <span className={styles.help}>{detail}</span>}</span>
+    </div>
+  );
+
+  // Liaison sans Internet facultative : coupée, le guide propose seulement de l'activer.
+  if (!link) return (
+    <div className={styles.wrap}>
+      <div className={styles.head}>
+        <button className={styles.back} onClick={onBack} aria-label={t("Retour", "Back")}>‹</button>
+        <h1 className={styles.h1}>{t("Connexion sans Internet", "Offline connection")}</h1>
+      </div>
+      <section className={styles.card}>
+        <h2 className={styles.h2}>{t("Liaison sans Internet coupée", "Offline link off")}</h2>
+        <p className={styles.note}>{t("Sur ce téléphone, l'app ne cherche pas les collègues par Bluetooth ou Wi-Fi et ne touche pas au Bluetooth. Active-la seulement si tu veux échanger messages, pannes et appels sans Internet.", "On this phone the app does not search colleagues over Bluetooth or Wi-Fi and leaves Bluetooth alone. Turn it on only if you want messages, faults and calls without Internet.")}</p>
+        <button className={styles.primary} disabled={busy} onClick={async () => {
+          setBusy(true);
+          try {
+            const on = await setOfflineLink(true, { id: state.me.id, pending: state.me.pending });
+            setLink(on);
+            if (!on) toast.error(t("Autorise « Appareils à proximité » pour activer la liaison.", "Allow “Nearby devices” to turn the link on."));
+          } finally { setBusy(false); }
+        }}>{t("Activer la liaison sans Internet", "Turn on offline link")}</button>
+      </section>
     </div>
   );
 

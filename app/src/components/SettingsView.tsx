@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { OutputType as State } from "../endpoints/g37/state_GET.schema";
 import { ALERT_SOUNDS, CALL_SOUNDS, previewSound, setSoundPrefs, soundPrefs, type SoundPrefs } from "../lib/sounds";
 import { Nearby, nativeSoundsAvailable, nativeV4Available, nearbyAvailable, type SettingKey, type SystemStatus } from "../lib/nearby";
-import { getPeers, myDataAt, peersChanged, reachableEnabled, requestP2PPermissions, setReachable, setSyncInterval, startP2P, syncIntervalMinutes, type Peer } from "../lib/p2p";
+import { getPeers, myDataAt, offlineLinkEnabled, peersChanged, reachableEnabled, requestP2PPermissions, setOfflineLink, setReachable, setSyncInterval, startP2P, syncIntervalMinutes, type Peer } from "../lib/p2p";
 import { enablePush, isPushOptedIn, pushSupported } from "../helpers/pushClient";
 import { syncNow } from "../helpers/useG37";
 import { useOnline } from "../lib/net";
@@ -35,6 +35,18 @@ export const SettingsView = ({ state, lang, setLang, onBack, onGuide }: Props) =
   const [pushOn, setPushOn] = useState(isPushOptedIn());
   const [v4, setV4] = useState(false);
   const [reach, setReach] = useState(reachableEnabled());
+  const [link, setLink] = useState(offlineLinkEnabled());
+  const [linkBusy, setLinkBusy] = useState(false);
+  const toggleLink = async (on: boolean) => {
+    setLinkBusy(true);
+    try {
+      const now = await setOfflineLink(on, { id: state.me.id, pending: state.me.pending });
+      setLink(now);
+      if (on && !now) toast.error(t("Autorisation refusée : la liaison sans Internet reste coupée.", "Permission refused: offline link stays off."));
+      else toast.success(now ? t("Liaison sans Internet activée.", "Offline link enabled.") : t("Liaison sans Internet coupée : l'app ne cherche plus les collègues par Bluetooth ou Wi-Fi.", "Offline link off: the app no longer searches colleagues over Bluetooth or Wi-Fi."));
+      await refresh();
+    } finally { setLinkBusy(false); }
+  };
   const [autostartDone, setAutostartDone] = useState(() => { try { return localStorage.getItem("g37.autostartSeen") === "1"; } catch { return false; } });
 
   const refresh = useCallback(async () => {
@@ -62,15 +74,15 @@ export const SettingsView = ({ state, lang, setLang, onBack, onGuide }: Props) =
     try {
       if (pushSupported() && !isPushOptedIn()) await enablePush().catch(() => {});
       if (nearbyAvailable()) {
-        await requestP2PPermissions();
+        if (link) await requestP2PPermissions();
         await Nearby.requestNearbyPermissions({ microphone: true }).catch(() => {});
-        await startP2P({ id: state.me.id, pending: state.me.pending }).catch(() => {});
+        if (link) await startP2P({ id: state.me.id, pending: state.me.pending }).catch(() => {});
       }
       await refresh();
       const s = native ? await Nearby.getSystemStatus().catch(() => null) : null;
       if (s && !s.battery) await open("battery");
       else if (s && !s.fullScreen) await open("fullScreen");
-      else if (s && !s.bluetooth) await open("bluetooth");
+      else if (s && link && !s.bluetooth) await open("bluetooth");
       else toast.success(t("Autorisations vérifiées.", "Permissions checked."));
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t("Autorisation refusée", "Permission refused"));
@@ -87,16 +99,17 @@ export const SettingsView = ({ state, lang, setLang, onBack, onGuide }: Props) =
     },
   });
   if (sys) {
-    rows.push(
+    if (link) rows.push(
       { key: "nearby", label: t("Appareils à proximité", "Nearby devices"), help: t("Échanges sans Internet (Bluetooth, Wi-Fi direct, même Wi-Fi, point d'accès).", "Offline exchange (Bluetooth, Wi-Fi Direct, same Wi-Fi, hotspot)."),
-        ok: sys.nearby, action: async () => { await requestP2PPermissions(); await startP2P({ id: state.me.id, pending: state.me.pending }).catch(() => {}); await refresh(); } },
+        ok: sys.nearby, action: async () => { await requestP2PPermissions(); await startP2P({ id: state.me.id, pending: state.me.pending }).catch(() => {}); await refresh(); } });
+    rows.push(
       { key: "mic", label: t("Micro", "Microphone"), help: t("Pour les appels et les notes vocales.", "For calls and voice notes."), ok: sys.microphone,
         action: async () => { await Nearby.requestNearbyPermissions({ microphone: true }).catch(() => {}); await refresh(); } },
       ...(v4 ? [{ key: "cam", label: t("Caméra", "Camera"), help: t("Pour les appels vidéo et les photos.", "For video calls and photos."), ok: !!sys.camera,
         action: async () => { await Nearby.requestNearbyPermissions({ microphone: true, camera: true }).catch(() => {}); await refresh(); } }] : []),
-      { key: "bt", label: t("Bluetooth allumé", "Bluetooth on"), help: t("Indispensable pour trouver les collègues sans Internet.", "Needed to find colleagues offline."), ok: sys.bluetooth, action: () => open("bluetooth") },
     );
-    if (sys.locationNeeded) rows.push({ key: "loc", label: t("Localisation activée", "Location on"), help: t("Exigée par Android pour la recherche Bluetooth.", "Required by Android for Bluetooth search."), ok: sys.location, action: () => open("location") });
+    if (link) rows.push({ key: "bt", label: t("Bluetooth allumé", "Bluetooth on"), help: t("Indispensable pour trouver les collègues sans Internet.", "Needed to find colleagues offline."), ok: sys.bluetooth, action: () => open("bluetooth") });
+    if (link && sys.locationNeeded) rows.push({ key: "loc", label: t("Localisation activée", "Location on"), help: t("Exigée par Android pour la recherche Bluetooth.", "Required by Android for Bluetooth search."), ok: sys.location, action: () => open("location") });
     if (sys.sdk >= 34) rows.push({ key: "fs", label: t("Écran d'appel plein écran", "Full-screen call screen"), help: t("Pour que l'appel s'affiche et sonne écran verrouillé.", "So calls show and ring on the lock screen."), ok: sys.fullScreen, action: () => open("fullScreen") });
     rows.push(
       { key: "bat", label: t("Batterie sans restriction", "Unrestricted battery"), help: t("Sinon Android coupe la synchronisation et les appels en arrière-plan.", "Otherwise Android stops background sync and calls."), ok: sys.battery, action: () => open("battery") },
@@ -148,7 +161,7 @@ export const SettingsView = ({ state, lang, setLang, onBack, onGuide }: Props) =
           <h2 className={styles.h2}>{t("Autorisations importantes", "Important permissions")}</h2>
           {missing > 0 && <span className={styles.badge}>{missing}</span>}
         </div>
-        <p className={styles.note}>{t("Nécessaires pour que les notifications et les appels sonnent même app fermée, et pour l'échange sans Internet.", "Needed so notifications and calls ring even when closed, and for offline exchange.")}</p>
+        <p className={styles.note}>{link ? t("Nécessaires pour que les notifications et les appels sonnent même app fermée, et pour l'échange sans Internet.", "Needed so notifications and calls ring even when closed, and for offline exchange.") : t("Nécessaires pour que les notifications et les appels sonnent même app fermée.", "Needed so notifications and calls ring even when closed.")}</p>
         {rows.map((r) => (
           <div key={r.key} className={styles.permRow}>
             <span className={`${styles.dot} ${r.ok ? styles.dotOk : styles.dotWarn}`} aria-hidden="true" />
@@ -162,10 +175,21 @@ export const SettingsView = ({ state, lang, setLang, onBack, onGuide }: Props) =
       <section className={styles.card}>
         <h2 className={styles.h2}>{t("Synchronisation", "Sync")}</h2>
         <p className={styles.note}>
-          {t("Avec Internet : immédiate. Sans Internet : le téléphone cherche les collègues (Bluetooth, Wi-Fi direct, même Wi-Fi, point d'accès) et vérifie qui a les dernières données.",
-            "With Internet: instant. Offline: the phone looks for colleagues (Bluetooth, Wi-Fi Direct, same Wi-Fi, hotspot) and checks who has the latest data.")}
+          {t("Avec Internet, la synchronisation est immédiate. Sans Internet, l'app peut aussi échanger avec les collègues proches par Bluetooth et Wi-Fi : c'est facultatif, à activer ci-dessous.",
+            "With Internet, sync is instant. Without Internet, the app can also exchange with nearby colleagues over Bluetooth and Wi-Fi: optional, turn it on below.")}
         </p>
-        {v4 && (
+        {nearbyAvailable() && (
+          <label className={styles.switchRow}>
+            <span>
+              <strong>{t("Liaison sans Internet (Bluetooth / Wi-Fi)", "Offline link (Bluetooth / Wi-Fi)")}</strong>
+              <span className={styles.help}>{link
+                ? t("Activée : l'app cherche les collègues proches et peut allumer le Bluetooth. Messages, pannes et appels passent même sans Internet.", "On: the app looks for nearby colleagues and may turn Bluetooth on. Messages, faults and calls work even offline.")
+                : t("Coupée : l'app ne touche pas au Bluetooth. Tout marche normalement avec Internet (données mobiles ou Wi-Fi).", "Off: the app leaves Bluetooth alone. Everything works normally with Internet (mobile data or Wi-Fi).")}</span>
+            </span>
+            <input type="checkbox" checked={link} disabled={linkBusy} onChange={(e) => void toggleLink(e.target.checked)} />
+          </label>
+        )}
+        {link && v4 && (
           <label className={styles.switchRow}>
             <span>
               <strong>{t("Toujours joignable sans Internet", "Always reachable offline")}</strong>
@@ -174,20 +198,20 @@ export const SettingsView = ({ state, lang, setLang, onBack, onGuide }: Props) =
             <input type="checkbox" checked={reach} onChange={(e) => { setReach(e.target.checked); void setReachable(e.target.checked); }} />
           </label>
         )}
-        {onGuide && (
+        {link && onGuide && (
           <button className={styles.primary} style={{ marginBottom: 12 }} onClick={onGuide}>{t("Guide : connexion automatique sans Internet", "Guide: automatic offline connection")}</button>
         )}
-        <div className={styles.field}>
+        {link && <div className={styles.field}>
           <span>{t("Vérifier sans Internet toutes les", "Check offline every")}</span>
           <div className={styles.seg}>
             {[15, 30, 60, 120].map((m) => (
               <button key={m} className={interval === m ? styles.segOn : styles.segBtn} onClick={() => { setIntervalMin(m); void setSyncInterval(m); }}>{m < 60 ? `${m} min` : `${m / 60} h`}</button>
             ))}
           </div>
-        </div>
+        </div>}
         <div className={styles.rowBetween}>
           <span className={styles.help}>{t("Mes données", "My data")} : {mine ? ago(Date.now() - mine, fr) : "—"}</span>
-          <button className={styles.small} disabled={!online} onClick={() => { void syncNow(queryClient); if (nearbyAvailable()) void Nearby.broadcastPacket().catch(() => {}); toast.success(t("Synchronisation lancée", "Sync started")); }}>
+          <button className={styles.small} disabled={!online} onClick={() => { void syncNow(queryClient); if (nearbyAvailable() && link) void Nearby.broadcastPacket().catch(() => {}); toast.success(t("Synchronisation lancée", "Sync started")); }}>
             {t("Synchroniser", "Sync now")}
           </button>
         </div>

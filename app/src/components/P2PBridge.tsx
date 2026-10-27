@@ -6,7 +6,7 @@ import { useG37, G37_STATE_KEY } from "../helpers/useG37";
 import { useOnline } from "../lib/net";
 import { realtime } from "../lib/realtime";
 import { toast } from "sonner";
-import { ensureP2PListeners, flushRelay, getSecrets, hotspotInvite, processInbox, refreshSecrets, registerDevice, startP2P, stopP2P } from "../lib/p2p";
+import { ensureP2PListeners, flushRelay, getSecrets, hotspotInvite, offlineLinkEnabled, processInbox, refreshSecrets, registerDevice, startP2P, stopP2P } from "../lib/p2p";
 import { onNewDm, refreshDms } from "../lib/dms";
 import { checkRinging, declineFromNotification, handleLaunchCall, onInternetSignal, setCallIdentity } from "../lib/calls";
 import { Nearby, isWifiEndpoint, nativeSoundsAvailable, type LaunchData, type RingingCall } from "../lib/nearby";
@@ -40,7 +40,8 @@ export const P2PBridge = () => {
         if (relayed) void queryClient.invalidateQueries({ queryKey: G37_STATE_KEY });
         await refreshDms(myId);
       }
-      if (!cancelled) await startP2P({ id: myId, pending });
+      // Liaison sans Internet facultative : si elle est coupée, on arrête aussi ce qu'une ancienne version a laissé tourner.
+      if (!cancelled) { if (offlineLinkEnabled()) await startP2P({ id: myId, pending }); else await stopP2P(true); }
     })().catch((e) => console.warn("Synchro de proximité :", e));
     return () => { cancelled = true; };
   }, [myId, pending, online, queryClient]);

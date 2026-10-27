@@ -271,3 +271,133 @@
 /* ---------- Panne : réglage avec pièces utilisées ---------- */
 .fixBox { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 12px; border-radius: 14px; background: var(--g-surface-2); }
 .partChip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid #3a5576; background: var(--g-surface); color: var(--g-ink); font: inherit; font-size: 0.78rem; cursor: pointer; }
+
+/* =====================================================================
+   Habillage « verre givré » sur tous les menus (27/10/2026)
+   Même style que l'accueil : lueurs colorées en fond, cartes en verre,
+   apparition en cascade et retour au toucher.
+   ===================================================================== */
+.app {
+  --g-surface: rgba(255, 255, 255, 0.065);
+  --g-surface-2: rgba(255, 255, 255, 0.1);
+  --g-line: rgba(255, 255, 255, 0.12);
+  --g-ok-soft: rgba(52, 211, 153, 0.14);
+  --g-warn-soft: rgba(251, 191, 36, 0.14);
+  --g-crit-soft: rgba(248, 113, 113, 0.15);
+  --g-accent-soft: rgba(245, 158, 11, 0.16);
+  --g-glass: linear-gradient(140deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035));
+  --g-glass-shadow: 0 12px 32px rgba(3, 8, 20, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --g-solid: #16263d;
+  position: relative;
+  isolation: isolate;
+}
+/* Lueurs lentes derrière le verre (une seule couche, légère pour les petits téléphones). */
+.app::before {
+  content: "";
+  position: fixed;
+  inset: -25%;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 14%, rgba(245, 158, 11, 0.24), transparent 32%),
+    radial-gradient(circle at 88% 46%, rgba(96, 165, 250, 0.22), transparent 34%),
+    radial-gradient(circle at 26% 88%, rgba(52, 211, 153, 0.16), transparent 32%);
+  animation: g37drift 26s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes g37drift {
+  0% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(4%, 3%) scale(1.06); }
+  100% { transform: translate(-3%, 5%) scale(0.97); }
+}
+
+/* Barres du haut et du bas en verre */
+.topbar {
+  background: rgba(11, 21, 36, 0.72);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+.bottomNav {
+  background: rgba(9, 17, 30, 0.8);
+  border-top-color: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+.navBtn { isolation: isolate; transition: color 160ms ease, transform 120ms ease; }
+.navBtn:active { transform: scale(0.92); }
+.navActive::before {
+  content: "";
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  width: 52px;
+  height: 32px;
+  margin-left: -26px;
+  border-radius: 16px;
+  background: rgba(245, 158, 11, 0.16);
+  z-index: -1;
+  animation: g37pop 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes g37pop { from { transform: scale(0.6); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Cartes en verre */
+.card, .statusCard, .kpi, .listCard {
+  background: var(--g-glass);
+  border: 1px solid var(--g-line);
+  box-shadow: var(--g-glass-shadow);
+  border-radius: 20px;
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+.card .card { box-shadow: none; }
+.mcard, .quickBtn, .moreItem, .todoRow, .syncChip {
+  background: var(--g-glass);
+  border: 1px solid var(--g-line);
+  box-shadow: 0 8px 22px rgba(3, 8, 20, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.mcard { border-radius: 18px; transition: transform 120ms ease, border-color 160ms ease, background 160ms ease; }
+.mcard:hover { border-color: rgba(245, 158, 11, 0.6); }
+.mcard:active, .quickBtn:active, .moreItem:active, .tile:active, .listMc:active { transform: scale(0.96); }
+.quickBtn, .moreItem, .tile, .listMc { transition: transform 120ms ease, background 160ms ease; }
+.quickPrimary { background: linear-gradient(140deg, #f59e0b, #f97316); border-color: rgba(255, 255, 255, 0.25); color: #1a1205; }
+.moreItem { border-radius: 18px; min-height: 84px; }
+.moreItem svg { width: 24px; height: 24px; }
+.listMc { background: rgba(255, 255, 255, 0.1); }
+.note {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.empty { background: rgba(255, 255, 255, 0.03); border-color: rgba(255, 255, 255, 0.16); border-radius: 18px; }
+.assistantPanel { background: var(--g-solid); border-color: rgba(255, 255, 255, 0.12); border-radius: 20px; }
+.assistantBubble { background: linear-gradient(140deg, #f59e0b, #f97316); }
+
+/* Titres plus présents */
+.title { font-size: 1.65rem; font-weight: 700; letter-spacing: -0.015em; }
+.h2 { font-size: 1.08rem; font-weight: 700; }
+.sub { font-size: 0.84rem; }
+
+/* Lignes de listes et de tableaux : réaction au toucher */
+.listRow, .item, .userRow { transition: background 160ms ease; }
+.listRow:active, .userRow:active { background: rgba(255, 255, 255, 0.04); }
+.table tbody tr { transition: background 160ms ease; }
+.table tbody tr:active { background: rgba(255, 255, 255, 0.05); }
+.highlight { background: rgba(245, 158, 11, 0.13); }
+
+/* Écrans vivants : chaque bloc apparaît en cascade à l'ouverture d'un menu */
+.stack > * { animation: g37rise 480ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.stack > *:nth-child(2) { animation-delay: 50ms; }
+.stack > *:nth-child(3) { animation-delay: 100ms; }
+.stack > *:nth-child(4) { animation-delay: 150ms; }
+.stack > *:nth-child(5) { animation-delay: 200ms; }
+.stack > *:nth-child(6) { animation-delay: 250ms; }
+.stack > *:nth-child(n + 7) { animation-delay: 300ms; }
+.machines > * { animation: g37rise 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.machines > *:nth-child(4n + 2) { animation-delay: 40ms; }
+.machines > *:nth-child(4n + 3) { animation-delay: 80ms; }
+.machines > *:nth-child(4n + 4) { animation-delay: 120ms; }
+@keyframes g37rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .app::before, .stack > *, .machines > *, .navActive::before { animation: none; }
+}

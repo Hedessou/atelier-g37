@@ -17,3 +17,6 @@
 .primary { height: 48px; border-radius: 12px; border: 0; background: var(--g-accent); color: var(--g-accent-ink); font: inherit; font-weight: 700; cursor: pointer; }
 .primary:disabled { opacity: 0.5; cursor: default; }
 .logout { height: 48px; border-radius: 12px; border: 1px solid #ef4444; background: transparent; color: #fca5a5; font: inherit; font-weight: 700; cursor: pointer; }
+
+/* Verre givré, comme l'accueil (27/10/2026) */
+.card { background: var(--g-glass, var(--g-surface)); border: 1px solid var(--g-line); box-shadow: var(--g-glass-shadow, none); border-radius: 20px; -webkit-backdrop-filter: blur(16px) saturate(140%); backdrop-filter: blur(16px) saturate(140%); }

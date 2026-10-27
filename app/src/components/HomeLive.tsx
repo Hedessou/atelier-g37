@@ -195,8 +195,7 @@ export function HomeLive({ state, lang, todo, prod, unread, actions, toggle, onO
 
   return (
     <div className={styles.wrap}>
-      <div className={styles.ambient} aria-hidden="true"><span className={styles.blobA} /><span className={styles.blobB} /><span className={styles.blobC} /></div>
-
+      {/* Les lueurs du fond sont maintenant communes à tous les menus (G37App.module.css). */}
       <header className={`${styles.head} ${styles.rise}`} style={rise()}>
         <div className={styles.headTop}>
           <div>

@@ -14,7 +14,7 @@ import type { G37Machine } from "../endpoints/g37/state_GET.schema";
 import { AppStatusBar } from "./AppStatusBar";
 import { MessagesView } from "./MessagesView";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./Dialog";
-import { getP2PStatus, getPeers, p2pStatus, peersChanged, requestP2PPermissions, startP2P } from "../lib/p2p";
+import { getP2PStatus, getPeers, offlineLinkChanged, offlineLinkEnabled, p2pStatus, peersChanged, requestP2PPermissions, startP2P } from "../lib/p2p";
 import { nearbyAvailable } from "../lib/nearby";
 import { unreadFrom, useDms } from "../lib/dms";
 import { SettingsView } from "./SettingsView";
@@ -227,13 +227,16 @@ export const G37App = ({ className }: { className?: string }) => {
       if (!(await nativeSoundsAvailable())) return;
       const st = await NativeNearby.getSystemStatus().catch(() => null);
       if (!st) return;
-      const list = [st.notifications, st.nearby, st.microphone, st.bluetooth, st.battery, st.sdk >= 34 ? st.fullScreen : true, st.locationNeeded ? st.location : true];
+      // Bluetooth, appareils à proximité et position : seulement si la liaison sans Internet est activée.
+      const link = offlineLinkEnabled();
+      const list = [st.notifications, link ? st.nearby : true, st.microphone, link ? st.bluetooth : true, st.battery, st.sdk >= 34 ? st.fullScreen : true, link && st.locationNeeded ? st.location : true];
       setPermMissing(list.filter((x) => !x).length);
     };
     void check();
     const onVis = () => { if (document.visibilityState === "visible") { void check(); void checkRinging(); } };
     document.addEventListener("visibilitychange", onVis);
-    return () => document.removeEventListener("visibilitychange", onVis);
+    const off = offlineLinkChanged.on(() => void check());
+    return () => { document.removeEventListener("visibilitychange", onVis); off(); };
   }, []);
   const [msgSegment, setMsgSegment] = useState<"chats" | "calls">("chats");
   const [peerToOpen, setPeerToOpen] = useState<number | null>(null);
