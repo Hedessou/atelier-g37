@@ -4,12 +4,13 @@
 // Rien n'est appliqué ici : l'application se fait par le serveur de l'app, avec les droits du compte de la personne.
 import { beninDay, ddmm, isoDay, rf, sql } from "./db.ts";
 import { allPoints, findItems } from "./features.ts";
-import { canEditType, type Level } from "./people.ts";
+import { canEditType, fullPhone, samePhone, type Level } from "./people.ts";
 import { RANGE } from "./gears.ts";
 
 export type Intent = {
   type: string; machines?: number[] | null; g?: number | null; h?: number | null; count?: number | null; date?: string | null;
   item?: string | null; qty?: number | null; mode?: string | null; gear?: string | null; team?: string | null; shift?: string | null;
+  phone?: string | null; tier?: number | null; rights?: string | null;
   person?: string | null; role?: string | null; approve?: boolean | null; status?: string | null; reason?: string | null; text?: string | null;
 };
 export type Built = { ops: Record<string, unknown>[]; lines: string[]; problems: string[] };
@@ -21,13 +22,15 @@ export const EDITS_SCHEMA = {
     type: "OBJECT",
     properties: {
       type: { type: "STRING", enum: ["gears", "count", "maint_next", "maint_done", "maint_schedule", "machine_status", "stock_in", "stock_out", "stock_set",
-        "gear_stock", "shift", "access", "work_add", "work_done", "fault_add", "fault_fix", "greasing"] },
+        "gear_stock", "shift", "access", "work_add", "work_done", "fault_add", "fault_fix", "greasing", "call_list"] },
       machines: { type: "ARRAY", items: { type: "INTEGER" }, nullable: true },
       g: { type: "INTEGER", nullable: true }, h: { type: "INTEGER", nullable: true },
       count: { type: "NUMBER", nullable: true },
       date: { type: "STRING", nullable: true },
       item: { type: "STRING", nullable: true }, qty: { type: "NUMBER", nullable: true },
       mode: { type: "STRING", enum: ["set", "add", "remove"], nullable: true },
+      phone: { type: "STRING", nullable: true }, tier: { type: "INTEGER", nullable: true },
+      rights: { type: "STRING", enum: ["superviseur", "staff", "aucun"], nullable: true },
       gear: { type: "STRING", nullable: true },
       team: { type: "STRING", enum: ["A", "B", "C", "G"], nullable: true },
       shift: { type: "STRING", enum: ["m", "s", "n", "r"], nullable: true },
@@ -52,6 +55,10 @@ export const EDITS_HELP = `Modifications (champ "edits") : seulement si MODIFICA
 - shift : date, team (A/B/C), shift (m = matin, s = après-midi, n = nuit, r = repos).
 - access : person (nom dans l'app), role (admin, superviseur, technicien, shift, genmaint, greaser, manager, forman, prodsup, prodman, helper) et/ou team, approve (true = valider le compte, false = le bloquer).
 - greasing : item (point de graissage / lubrification : « front rollers », « nipples », « drafting gear box »…), machines (graissage fait aujourd'hui).
+- call_list (liste des numéros du robot : appel du soir et droits WhatsApp) : person (nom), phone (numéro tel qu'il est dit), mode
+  (add = ajouter ou modifier, remove = retirer de la liste d'appel), tier = rang d'appel du soir (1 = appelé d'abord, 2 = 15 min après, 3 = 15 min encore après, 4…),
+  rights (superviseur / staff / aucun) si on change ses droits. « change le numéro de Raimi : 0197… » → person Raimi, phone, mode add (sans tier).
+  « ajoute Jean 0197… dans les responsables à appeler » → tier 2. « n'appelle plus Mark » → person Mark, mode remove.
 - work_add : machines, text. work_done : machines, text (quel travail). fault_add : machines, text. fault_fix : machines, text (ce qui a été fait).
 Dates relatives (« demain », « lundi ») : calcule-les depuis la date d'aujourd'hui donnée plus haut. Ne mets que ce que la personne a demandé.
 Dans "reply", ne dis pas que c'est fait : le système résume et demande « oui » avant de modifier.`;
@@ -79,7 +86,7 @@ async function findUser(name: string) {
 const TYPE_FR: Record<string, string> = { gears: "pignons", count: "count", maint_next: "dates de maintenance", maint_done: "fin de maintenance",
   maint_schedule: "programmation de maintenance", machine_status: "état des machines", stock_in: "arrivées au magasin", stock_out: "sorties de matériel",
   stock_set: "inventaire du magasin", gear_stock: "stock de pignons", shift: "quarts", access: "accès", work_add: "travaux", work_done: "travaux",
-  fault_add: "pannes", fault_fix: "pannes", greasing: "graissage" };
+  fault_add: "pannes", fault_fix: "pannes", greasing: "graissage", call_list: "liste d'appel" };
 
 export async function buildEdits(intents: Intent[], level: Level = "owner"): Promise<Built> {
   const ops: Record<string, unknown>[] = [];
@@ -290,6 +297,45 @@ export async function buildEdits(intents: Intent[], level: Level = "owner"): Pro
           i = j;
         }
         lines.push(`${pt.kind === "lub" ? "Lubrification" : pt.kind === "sched" ? "Schedule works" : "Graissage"} *${pt.name}* fait aujourd'hui : ${sorted.map(rf).join(", ")}`);
+        break;
+      }
+      case "call_list": {
+        if (level !== "owner") { problems.push("Seul l'admin peut changer la liste des numéros du robot."); break; }
+        const rows = await sql`SELECT id, name, phone, user_id, level, call_tier FROM wa_people WHERE active ORDER BY id`;
+        const ph = it.phone ? fullPhone(it.phone) : "";
+        if (it.phone && !/^229\d{8,10}$/.test(ph)) { problems.push(`Liste d'appel : numéro « ${it.phone} » pas compris.`); break; }
+        const q = norm(it.person ?? "");
+        const byName = q ? rows.filter((r) => { const n = norm(String(r.name)); return n === q || q.split(" ").every((w) => n.includes(w)); }) : [];
+        const byPhone = ph ? rows.filter((r) => samePhone(r.phone, ph)) : [];
+        if (byPhone[0] && byName.length === 1 && byName[0].id !== byPhone[0].id) { problems.push(`Liste d'appel : le numéro ${ph} est déjà celui de ${byPhone[0].name}.`); break; }
+        const cur = byPhone[0] ?? (byName.length === 1 ? byName[0] : null);
+        if (!cur && byName.length > 1) { problems.push(`Liste d'appel : plusieurs « ${it.person} » : ${byName.map((r) => `${r.name} (${r.phone})`).join(" ; ")}. Donne le numéro.`); break; }
+        const tierTxt = (t: unknown) => t == null ? "pas appelé le soir" : `appelé en ${t === 1 ? "1er" : `${t}e`}`;
+        if (it.mode === "remove") {
+          if (!cur) { problems.push(`Liste d'appel : « ${it.person ?? it.phone} » n'est pas dans la liste.`); break; }
+          ops.push({ action: "waPerson", id: Number(cur.id), callTier: null });
+          lines.push(`Liste d'appel : *${cur.name}* ne sera plus appelé le soir (il garde ses droits WhatsApp)`);
+          break;
+        }
+        if (!cur && !ph) { problems.push(`Liste d'appel : quel est le numéro de « ${it.person} » ?`); break; }
+        const tier = it.tier != null && Number(it.tier) >= 1 && Number(it.tier) <= 9 ? Math.round(Number(it.tier)) : undefined;
+        const levelNew = it.rights === "superviseur" ? "supervisor" : it.rights === "staff" ? "staff" : it.rights === "aucun" ? "none" : undefined;
+        const name = it.person?.trim() ? it.person.trim().slice(0, 60) : undefined;
+        let userId: number | undefined;
+        if (!cur?.user_id && name) { const { best } = await findUser(name); if (best) userId = Number(best.id); }
+        if (cur && String(cur.level) === "owner" && levelNew) { problems.push("Liste d'appel : on ne change pas les droits de l'admin."); break; }
+        ops.push({ action: "waPerson", id: cur ? Number(cur.id) : null, name: cur ? (name && byPhone.length && norm(name) !== norm(String(cur.name)) ? name : undefined) : name ?? ph,
+          phone: ph && (!cur || cur.phone !== ph) ? ph : undefined, callTier: tier, level: cur ? levelNew : levelNew ?? "staff", userId });
+        const what: string[] = [];
+        if (!cur) what.push(`ajouté : ${ph}`, levelNew ? `droits ${levelNew === "supervisor" ? "superviseur" : levelNew}` : "droits staff", tierTxt(tier ?? null));
+        else {
+          if (ph && cur.phone !== ph) what.push(`numéro ${cur.phone} → *${ph}*`);
+          if (name && byPhone.length && norm(name) !== norm(String(cur.name))) what.push(`nom → *${name}*`);
+          if (tier !== undefined && tier !== cur.call_tier) what.push(`${tierTxt(cur.call_tier)} → *${tierTxt(tier)}*`);
+          if (levelNew && levelNew !== cur.level) what.push(`droits ${cur.level} → *${levelNew}*`);
+        }
+        if (userId) what.push("relié à son compte de l'app");
+        lines.push(`Liste d'appel : *${cur?.name ?? name ?? ph}* : ${what.join(", ") || "aucun changement"}`);
         break;
       }
       default:

@@ -3,11 +3,12 @@
 //   Robot (en-tête x-wa-key) : POST wa/mutate · POST wa/ask_call · POST wa/ask_answer
 //   App (session x-g37-token) : GET g37/ask · POST g37/ask_answer · GET g37/ask_audio
 import { CORS, json, withCors } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/48803080ff763721c0470f9c58fd3193d12a4445/supabase/functions/api/lib/http.ts";
-import { handleAsk, handleAskAnswer, handleAskAudio, handleWaAskAnswer, handleWaAskCall, handleWaMutate } from "./wa.ts";
+import { handleAsk, handleAskAnswer, handleAskAudio, handleWaAskAnswer, handleWaAskCall } from "./wa.ts";
+import { handleWaMutateAll } from "./people.ts";
 
 type Handler = (request: Request) => Promise<Response>;
 const ROUTES: Record<string, Handler> = {
-  "POST wa/mutate": handleWaMutate,
+  "POST wa/mutate": handleWaMutateAll,
   "POST wa/ask_call": handleWaAskCall,
   "POST wa/ask_answer": handleWaAskAnswer,
   "GET g37/ask": handleAsk,
