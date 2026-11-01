@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { openRobotAsk } from "../components/RobotAsk";
 import { newId } from "./offline";
 import { isOnline } from "./net";
 import { Nearby, isWifiEndpoint, nativeSoundsAvailable, nativeV4Available, nearbyAvailable } from "./nearby";
@@ -738,6 +739,8 @@ function showIncoming(roomId: string, from: number, name: string, group: boolean
 // Ouverture depuis la notification d'appel (app fermée ou en arrière-plan).
 export async function handleLaunchCall(c: { room: string; name?: string; from?: string | number; action?: string; group?: boolean; via?: string; endpoint?: string; mode?: string; video?: boolean }) {
   if (!c.room) return;
+  // « ask-12 » : appel du Robot G37 (question de 16h30), pas un appel entre collègues → fenêtre de question.
+  if (/^ask-\d+$/.test(c.room)) { openRobotAsk(Number(c.room.slice(4)), true); return; }
   const same = state.phase !== "idle" && state.phase !== "ended" && state.roomId === c.room;
   if (c.via === "proche" || c.via === "wifi") {
     await ensureP2PListeners();

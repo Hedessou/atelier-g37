@@ -37,6 +37,7 @@ import { MaintScheduleDialog } from "./MaintScheduleDialog";
 import { MachinesLive } from "./MachinesLive";
 import { MachineHistory } from "./MachineHistory";
 import { StoreView } from "./StoreView";
+import { openRobotAsk } from "./RobotAsk";
 import styles from "./G37App.module.css";
 
 const TABS: Array<[string, string, string]> = [
@@ -497,6 +498,8 @@ export const G37App = ({ className }: { className?: string }) => {
   // Une notification reçue site ouvert : on la montre et on la fait sonner.
   useEffect(() => onPushMessage((payload) => {
     const kind = payload.data?.kind;
+    // Appel du Robot G37 (question de 16h30) reçu app ouverte : la question s'affiche et se lit à voix haute.
+    if (kind === "call" && /^ask-\d+$/.test(String(payload.data?.room ?? ""))) { void playAlert("alert"); openRobotAsk(Number(String(payload.data?.room).slice(4)), true); return; }
     if (kind === "call" || kind === "call_end") { void checkRinging(); return; }
     if (!payload.title) return;
     if (kind === "dm" || kind === "chat") {

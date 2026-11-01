@@ -1,0 +1,22 @@
+{
+  "phone": "2290168869634",
+  "readOnlyGroups": [
+    "Spinning Shift Supervisors"
+  ],
+  "reportGroup": "Ring Fram Local Team",
+  "reportHour": 8,
+  "reportDays": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "utcOffsetHours": 1,
+  "apiUrl": "https://yrtoimldmzlnmsoapcij.supabase.co/functions/v1/wa-bot",
+  "apiKey": "(clé secrète : app_config wa.key — ne pas mettre sur GitHub)",
+  "telegramBotToken": "",
+  "telegramChatId": "",
+  "linkMethod": "code"
+}

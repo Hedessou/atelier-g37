@@ -1,0 +1,11 @@
+config.json
+auth/
+auth-*/
+node_modules/
+bot.log*
+state.json
+pending.json
+bot.pid
+CODE.txt
+qr.png
+*.jsonl

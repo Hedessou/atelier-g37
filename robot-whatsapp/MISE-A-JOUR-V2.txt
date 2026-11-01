@@ -1,0 +1,54 @@
+ROBOT WHATSAPP G37 — MISE À JOUR V2 (01/11/2026)
+================================================
+
+Ce qui est déjà fait côté serveur (rien à faire) :
+- Base de données : liste des personnes (wa_people), appels du soir, rapports de quart, journal des modifications.
+- Fonction wa-bot v14 (robot) et nouvelle fonction wa-app (modifications de l'app demandées par WhatsApp).
+- Essai réel du rapport PDF du 30/10 (matin) : 28 machines lues, 5 pannes trouvées
+  (Mc 17, 21, 22, 27, 28), le changement de count de la Mc 18 n'est pas compté comme panne.
+
+CE QU'IL FAUT FAIRE SUR LE VPS (Windows)
+----------------------------------------
+1. Double-clic sur 3-arreter.bat (arrête l'ancien robot).
+2. Dans le dossier du robot, remplace bot.js et package.json par ceux de ce dossier.
+   Garde ton config.json actuel (il contient la clé secrète). Vérifie juste qu'il contient :
+     "phone": "2290168869634",
+     "linkMethod": "code"
+3. Renomme le dossier « auth » en « auth-ancien » (l'ancienne liaison ne marche plus).
+4. Ouvre une invite de commandes dans le dossier et tape :
+     npm.cmd install
+   (installe Baileys et ffmpeg pour les notes vocales ; patiente 1 à 3 minutes)
+5. Double-clic sur 1-demarrer.bat.
+6. Le code à 8 caractères s'affiche (il est aussi écrit dans CODE.txt).
+   Sur le téléphone du robot : WhatsApp > Appareils connectés > Connecter un appareil
+   > « Connecter avec le numéro de téléphone à la place » > saisis le code.
+   Le code change toutes les ~60 s : saisis toujours le DERNIER affiché.
+7. Quand « Connecté » s'affiche, lance 2-demarrage-automatique.bat (redémarrage auto du VPS).
+
+QUI PEUT FAIRE QUOI DEPUIS WHATSAPP (le robot demande toujours « Oui » avant d'appliquer)
+-------------------------------------------------------------------------------------
+- Admin (Habib, 0196142534) : tout, y compris les accès.
+- Superviseur (Abraham, 98 72 86 75) : tout sauf les accès.
+- Les autres numéros de la liste : pignons/count, sorties de matériel, fin de maintenance, graissage.
+
+APPEL DU SOIR (16h30)
+---------------------
+- 16h30 : Abraham (appel dans l'app + note vocale WhatsApp) :
+  « La maintenance d'aujourd'hui est-elle finie ? Quelle machine demain ? »
+- Sans réponse 15 min après : Saturnin, Raimi (WhatsApp seulement, pas dans l'app), Mark.
+- Encore 15 min : toi, en dernier recours.
+- « Oui » = maintenance marquée faite, prochaine dans 30 jours.
+  On peut répondre : « oui, demain 5 », « 3 finie, 7 pas encore », « non pas la 5 mais la 6 ».
+- Le samedi, pas de question pour le lendemain (dimanche).
+
+RAPPORTS PDF DE QUART (groupe « Spinning Shift Supervisors »)
+-------------------------------------------------------------
+- Chaque PDF (7h-15h, 15h-23h, 23h-7h) est lu : efficience de chaque machine remplie dans l'app.
+- Remarques avec durée (« = 60' ») → panne réglée avec sa durée ; sans durée → panne ouverte.
+- APP, count change, run out, new lot ne sont pas des pannes.
+- Un résumé est envoyé dans le groupe.
+
+L'APP
+-----
+La fenêtre « Question du robot » (cases à cocher + choix de la machine de demain) arrive par
+mise à jour de l'app (pas besoin de réinstaller l'APK) quand la branche sera poussée sur GitHub.

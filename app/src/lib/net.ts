@@ -49,7 +49,8 @@ export function installNetwork() {
     headers.set("x-app-version", BUNDLE_VERSION);
     const device = deviceIdSync();
     if (device) headers.set("x-g37-device", device);
-    const target = API_BASE + url.slice("/_api/".length);
+    // Question du soir du Robot G37 : servie par la fonction « wa-app » (01/11/2026).
+    const target = (/^\/_api\/g37\/ask(?:_answer|_audio)?(?:[?#]|$)/.test(url) ? API_BASE.replace(/\/api\/$/, "/wa-app/") : API_BASE) + url.slice("/_api/".length);
     try {
       const res = await original(target, {
         ...init,

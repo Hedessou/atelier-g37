@@ -1,0 +1,19 @@
+{
+  "name": "g37-whatsapp",
+  "version": "2.0.0",
+  "description": "Numéro robot WhatsApp d'Atelier G37 : lit les groupes Ring Frame et envoie le rapport du matin",
+  "main": "bot.js",
+  "private": true,
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "latest",
+    "pino": "^9.5.0",
+    "sharp": "^0.34.0",
+    "ffmpeg-static": "^5.2.0"
+  }
+}

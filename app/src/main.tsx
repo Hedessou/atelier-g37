@@ -25,6 +25,7 @@ import { UserRoute } from "./components/ProtectedRoute";
 import { RealtimeBridge } from "./components/RealtimeBridge";
 import { P2PBridge } from "./components/P2PBridge";
 import { CallOverlay } from "./components/CallOverlay";
+import { RobotAsk } from "./components/RobotAsk";
 import { G37App } from "./components/G37App";
 import LoginPage from "./pages/login";
 import RegisterPage from "./pages/register";
@@ -56,6 +57,7 @@ function Workshop() {
         <G37App />
       </main>
       <CallOverlay />
+      <RobotAsk />
     </UserRoute>
   );
 }
