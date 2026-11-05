@@ -348,6 +348,16 @@ export function applyLocal(state: State, op: Pick<Op, "opId" | "clientAt" | "inp
       if (!need("stockManage")) return state;
       s.stock = s.stock.filter((x) => x.id !== input.id);
       return s;
+    case "stockEdit":
+      if (!need("stockManage")) return state;
+      s.stock = s.stock.map((x) => x.id === input.id ? {
+        ...x, name: input.name, category: input.category, unit: input.unit, minimumQuantity: String(input.minimumQuantity),
+        ...(input.unitPrice !== undefined ? { unitPrice: input.unitPrice == null ? null : String(input.unitPrice) } : {}),
+        ...(input.leadDays !== undefined ? { leadDays: input.leadDays } : {}),
+        ...(input.code !== undefined ? { code: input.code || null } : {}),
+        ...(input.note !== undefined ? { note: input.note || null } : {}),
+      } : x);
+      return s;
     case "profileInfo": {
       const full = [input.firstName.trim(), input.lastName.trim()].filter(Boolean).join(" ");
       const patchUser = <T extends { id: number; displayName: string }>(u: T): T => u.id === me.id

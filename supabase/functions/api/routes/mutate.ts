@@ -30,8 +30,8 @@ export const schema = z.discriminatedUnion("action", [
     saveExtras: z.boolean().optional(),
   }).optional() }),
   z.object({ action: z.literal("stockQty"), id: z.string().min(1), quantity: z.number().min(0), baseQuantity: z.number().min(0).nullable().optional() }),
-  z.object({ action: z.literal("stockAdd"), name: z.string().trim().min(1).max(120), category: z.string().trim().min(1).max(60), unit: z.string().trim().min(1).max(20), quantity: z.number().min(0).max(1000000), minimumQuantity: z.number().min(0).max(1000000), unitPrice: z.number().min(0).max(1e9).nullable().optional(), leadDays: z.number().int().min(1).max(365).optional() }),
-  z.object({ action: z.literal("stockEdit"), id: z.string().min(1), name: z.string().trim().min(1).max(120), category: z.string().trim().min(1).max(60), unit: z.string().trim().min(1).max(20), minimumQuantity: z.number().min(0).max(1000000), unitPrice: z.number().min(0).max(1e9).nullable().optional(), leadDays: z.number().int().min(1).max(365).optional() }),
+  z.object({ action: z.literal("stockAdd"), name: z.string().trim().min(1).max(120), category: z.string().trim().min(1).max(60), unit: z.string().trim().min(1).max(20), quantity: z.number().min(0).max(1000000), minimumQuantity: z.number().min(0).max(1000000), unitPrice: z.number().min(0).max(1e9).nullable().optional(), leadDays: z.number().int().min(1).max(365).optional(), code: z.string().trim().max(40).nullable().optional(), note: z.string().trim().max(300).nullable().optional() }),
+  z.object({ action: z.literal("stockEdit"), id: z.string().min(1), name: z.string().trim().min(1).max(120), category: z.string().trim().min(1).max(60), unit: z.string().trim().min(1).max(20), minimumQuantity: z.number().min(0).max(1000000), unitPrice: z.number().min(0).max(1e9).nullable().optional(), leadDays: z.number().int().min(1).max(365).optional(), code: z.string().trim().max(40).nullable().optional(), note: z.string().trim().max(300).nullable().optional() }),
   z.object({ action: z.literal("stockOut"), itemId: z.string().min(1).max(80), quantity: z.number().positive().max(100000), machineNo: z.number().int().min(1).max(28).nullable(), failureId: z.string().max(80).nullable().optional(), note: z.string().max(300).nullable().optional() }),
   z.object({ action: z.literal("stockIn"), itemId: z.string().min(1).max(80), quantity: z.number().positive().max(1000000), note: z.string().max(300).nullable().optional() }),
   z.object({ action: z.literal("checklistStepAdd"), text: z.string().trim().min(1).max(200) }),
@@ -336,7 +336,7 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
     case "stockAdd": {
       if (!need("stockManage")) return deny("Seuls l'admin et le superviseur ajoutent du matériel au magasin.");
       const id = nanoid();
-      await db.insertInto("stockItems").values({ id, name: input.name, category: input.category, unit: input.unit, quantity: input.quantity, minimumQuantity: input.minimumQuantity, unitPrice: input.unitPrice ?? null, leadDays: input.leadDays ?? 14 }).execute();
+      await db.insertInto("stockItems").values({ id, name: input.name, category: input.category, unit: input.unit, quantity: input.quantity, minimumQuantity: input.minimumQuantity, unitPrice: input.unitPrice ?? null, leadDays: input.leadDays ?? 14, code: input.code || null, note: input.note || null }).execute();
       await db.insertInto("stockMovements").values({ id: nanoid(), itemId: id, movementType: "entrée", quantity: input.quantity, reason: `Création par ${me.displayName}`, authorName: me.displayName }).execute();
       if (input.quantity < input.minimumQuantity) await notifyRoles({ jobRoles: ["superviseur", "technicien", "shift"], excludeUserId: me.id, tag: `stock-${id}`, title: "Stock sous le seuil", body: `${input.name} : ${input.quantity} (seuil ${input.minimumQuantity})` });
       return ok(`« ${input.name} » ajouté au magasin.`);
@@ -346,7 +346,8 @@ export async function applyMutation(me: Me, input: InputType, now: Date): Promis
       const cur = await db.selectFrom("stockItems").select(["quantity", "minimumQuantity"]).where("id", "=", input.id).executeTakeFirst();
       if (!cur) return deny("Article introuvable.", 404);
       await db.updateTable("stockItems").set({ name: input.name, category: input.category, unit: input.unit, minimumQuantity: input.minimumQuantity, updatedAt: now,
-        ...(input.unitPrice !== undefined ? { unitPrice: input.unitPrice } : {}), ...(input.leadDays !== undefined ? { leadDays: input.leadDays } : {}) }).where("id", "=", input.id).execute();
+        ...(input.unitPrice !== undefined ? { unitPrice: input.unitPrice } : {}), ...(input.leadDays !== undefined ? { leadDays: input.leadDays } : {}),
+        ...(input.code !== undefined ? { code: input.code || null } : {}), ...(input.note !== undefined ? { note: input.note || null } : {}) }).where("id", "=", input.id).execute();
       const qty = Number(cur.quantity);
       if (qty < input.minimumQuantity && qty >= (Number(cur.minimumQuantity) || 0)) await notifyRoles({ jobRoles: ["superviseur", "technicien", "shift"], excludeUserId: me.id, tag: `stock-${input.id}`, title: "Stock sous le seuil", body: `${input.name} : ${qty} restant(s) (seuil ${input.minimumQuantity})` });
       return ok("Article modifié.");

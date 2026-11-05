@@ -54,6 +54,9 @@ export type G37StockItem = {
   used30?: number;
   perDay?: number;
   daysLeft?: number | null;
+  // 05/11/2026 : code fournisseur (ex. Rieter) et remarque.
+  code?: string | null;
+  note?: string | null;
 };
 
 export type G37StockOut = {

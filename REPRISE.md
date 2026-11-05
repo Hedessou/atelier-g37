@@ -121,3 +121,14 @@ Copie tout le bloc ci-dessous dans la nouvelle conversation, avec le zip `atelie
 - `app/release.json` : versionCode natif 4, minimum 4 (tout le monde doit installer l'APK 4).
 - Vérifié ici : Java compilé contre android.jar 34 (+ bibliothèques simulées), codec testé (31 dB), TypeScript vérifié
   (bibliothèques simulées), paquet JS assemblé. **Pas encore** : compilation Gradle réelle et essai sur téléphones.
+
+## Magasin en tableau (05/11/2026)
+- **Écran Magasin** (`StoreView.tsx`) : tableau façon Excel — en-têtes figés, colonnes N° et Désignation figées,
+  quadrillage, lignes alternées, bandes par catégorie, tri en touchant un titre, compteurs-filtres (Articles / À commander /
+  En rupture), recherche par nom, code, catégorie ou remarque. Une ligne touchée ouvre la fiche (Sortir, Arrivée, Inventaire, Modifier).
+- **Base** : colonnes `stock_items.code` et `stock_items.note` (migration `stock_items_code_note`). 28 pièces « Bobbin transport »
+  ajoutées depuis la liste papier (ids `g37-bt-01` à `g37-bt-28`, mouvement d'entrée `mv-g37-bt-NN`).
+- **Serveur `api` (déploiement simplifié)** : la fonction déployée ne contient plus que `deno.json` + un `index.ts` d'une ligne
+  qui importe `supabase/functions/api/index.ts` depuis GitHub **à un commit précis** (adresse raw.githubusercontent.com avec le
+  hash complet). Pour publier une nouvelle version du serveur : pousser le code, puis redéployer ces 2 fichiers avec le nouveau hash.
+  L'ancienne méthode (tous les fichiers en un seul envoi) marche toujours.

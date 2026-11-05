@@ -112,6 +112,8 @@ export const schema = z.discriminatedUnion("action", [
     minimumQuantity: z.number().min(0).max(1000000),
     unitPrice: z.number().min(0).max(1e9).nullable().optional(),
     leadDays: z.number().int().min(1).max(365).optional(),
+    code: z.string().trim().max(40).nullable().optional(),
+    note: z.string().trim().max(300).nullable().optional(),
   }),
   z.object({
     action: z.literal("stockEdit"),
@@ -122,6 +124,8 @@ export const schema = z.discriminatedUnion("action", [
     minimumQuantity: z.number().min(0).max(1000000),
     unitPrice: z.number().min(0).max(1e9).nullable().optional(),
     leadDays: z.number().int().min(1).max(365).optional(),
+    code: z.string().trim().max(40).nullable().optional(),
+    note: z.string().trim().max(300).nullable().optional(),
   }),
   z.object({ action: z.literal("stockDelete"), id: z.string().min(1) }),
   z.object({

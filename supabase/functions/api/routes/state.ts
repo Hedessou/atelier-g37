@@ -24,7 +24,7 @@ export async function handleState(request: Request): Promise<Response> {
       db.selectFrom("users").select(["id", "email", "displayName", "role", "jobRole", "team", "pending", "lastSeen", "firstName", "lastName", "postTitle", "avatarUrl"]).orderBy("displayName", "asc").execute(),
       db.selectFrom("machines").select(["id", "name", "machineNo", "groupId", "status", "runG", "runH", "runCount", "stopReason", "stoppedSince", "lastMaintenance", "nextMaintenance", "maintPlannedBy", "maintPlannedAt", "maintPlanNote"]).execute(),
       db.selectFrom("gears").select(["gearType", "teeth", "stock"]).orderBy("gearType", "asc").orderBy("teeth", "asc").execute(),
-      db.selectFrom("stockItems").select(["id", "name", "category", "unit", "quantity", "minimumQuantity", "unitPrice", "leadDays"]).orderBy("category", "asc").orderBy("name", "asc").execute(),
+      db.selectFrom("stockItems").select(["id", "name", "category", "unit", "quantity", "minimumQuantity", "unitPrice", "leadDays", "code", "note"]).orderBy("category", "asc").orderBy("name", "asc").execute(),
       db.selectFrom("works").select(["id", "machineNo", "title", "status", "auto", "authorName", "doneByName", "doneAt", "createdAt"]).orderBy("createdAt", "desc").limit(400).execute(),
       db.selectFrom("failures").select(["id", "machineId", "issue", "severity", "status", "notes", "technician", "reportedBy", "fixedBy", "openedAt", "resolvedAt", "stoppedAt", "restartedAt"]).orderBy("openedAt", "desc").limit(1500).execute(),
       db.selectFrom("greasingRecords").select(["machineNo", "kind", "pointKey", "doneOn", "authorName"]).orderBy("doneOn", "desc").limit(4000).execute(),
@@ -123,6 +123,7 @@ export async function handleState(request: Request): Promise<Response> {
         return {
           id: s.id, name: s.name, category: s.category, unit: s.unit, quantity: String(s.quantity), minimumQuantity: String(s.minimumQuantity),
           unitPrice: s.unitPrice == null ? null : String(s.unitPrice), leadDays: Number(s.leadDays ?? 14),
+          code: s.code ?? null, note: s.note ?? null,
           used30: u.u30, perDay: Math.round(perDay * 1000) / 1000, daysLeft: perDay > 0 ? Math.floor(Number(s.quantity) / perDay) : null,
         };
       }) : [],
