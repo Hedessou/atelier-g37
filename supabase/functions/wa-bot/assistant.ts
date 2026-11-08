@@ -8,6 +8,7 @@ import { gemini, QuotaError, quotaMessage, type Part, type Turn } from "./gemini
 import { extractMachines, normalize, parseMessage } from "./parse.ts";
 import { buildEdits, EDITS_HELP, EDITS_SCHEMA, type Intent } from "./edits.ts";
 import { pendingAsk, readAnswer } from "./evening.ts";
+import { command } from "./features.ts";
 import { appApi, learnName, LEVEL_FR, personByPhone, type Person } from "./people.ts";
 
 export type ChatIn = {
@@ -171,6 +172,17 @@ async function gearCalc(text: string): Promise<string> {
 // ---------- Consigne de l'assistant ----------
 const SYSTEM = `Tu es « l'assistant G37 », l'assistant technique de l'atelier Ring Frame (continus à filer) d'une filature, joignable sur WhatsApp.
 Tu parles avec des maintenanciers, des superviseurs et des techniciens.
+
+Façon de travailler (très important) :
+- Comprends d'abord l'INTENTION du message : question, annonce d'un fait fait (panne, remise en marche, maintenance, graissage, magasin),
+  demande de modification, réponse à un message précédent, ou simple salutation. Les messages sont courts, en français ou anglais d'atelier,
+  avec fautes et abréviations : « Mc/Rf/MC 12 » = machine 12, « gear » = pignon, « running » = en marche, « clg » = cleaning (maintenance),
+  « KW/CW/CCW » = type de fil (le nombre devant = count), « G/H » = pignons de draft.
+- Si une information indispensable manque (quelle machine ? quel chiffre ?) ou si le message peut se comprendre de deux façons :
+  pose UNE question courte au lieu de deviner. Mieux vaut demander que répondre faux.
+- Ne réponds QUE ce que les données permettent d'affirmer. Si G37 n'a pas l'information : dis « je n'ai pas cette information dans G37 »
+  et dis où la trouver (app, superviseur). Jamais de chiffre inventé, jamais de réponse « au hasard ».
+- Va droit au but : pas de reformulation de la question, pas de formule de politesse inutile, pas de répétition.
 
 Sources (dans cet ordre) :
 1. DONNÉES ATELIER G37 ci-dessous (état réel des machines, pannes, solutions passées, stock) : toujours prioritaires. Cite-les simplement (« d'après G37 … »).
@@ -368,6 +380,46 @@ export async function chat(body: ChatIn, exec: Exec): Promise<ChatOut> {
     return { reply: `✅ Enregistré dans G37 :\n${lines.map((l: string) => `• ${l}`).join("\n")}${r.reply && !lines.includes(r.reply) ? `\n${r.reply}` : ""}`, executed: true };
   }
   if (pend) await sql`UPDATE wa_pending_action SET status = 'expired' WHERE id = ${pend.id}`;
+
+  // 1 bis) Plusieurs counts d'un coup (sans l'IA) : « counts 1 30, 2 30, 7 20 » → récapitulatif + Oui/Non.
+  const bulk = text.match(/^\s*counts?\s*[:\-]?\s*(.+)$/i);
+  if (bulk && canEdit && !body.image && !/\?/.test(text)) {
+    const pairs = [...bulk[1].matchAll(/(?:mc|rf)?\s*(\d{1,2})\s*(?:=|:|→|->|-|en|à|a)?\s*(\d{1,3}(?:[.,]\d+)?)/gi)]
+      .map((m) => ({ no: Number(m[1]), count: Number(m[2].replace(",", ".")) }))
+      .filter((x) => x.no >= 1 && x.no <= 28 && x.count >= 4 && x.count <= 200);
+    if (pairs.length >= 1 && pairs.length * 2 >= (bulk[1].match(/\d+/g) ?? []).length) {
+      const b = await buildEdits(pairs.map((x) => ({ type: "count", machines: [x.no], count: x.count }) as Intent), person!.level);
+      let reply = "";
+      if (b.ops.length) {
+        await sql`INSERT INTO wa_pending_action (user_jid, user_name, command, summary, kind, ops, phone)
+          VALUES (${user}, ${name}, ${"edit"}, ${b.lines.join("\n").slice(0, 3000)}, 'edit', ${sql.json(b.ops)}, ${person!.phone})`;
+        reply = `✏️ *Je modifie dans G37 :*\n${b.lines.map((l) => `• ${l}`).join("\n")}\n\nRéponds *Oui* pour confirmer ou *Non* pour annuler.`;
+      }
+      if (b.problems.length) reply += `${reply ? "\n\n" : ""}⚠️ ${b.problems.join("\n⚠️ ")}`;
+      if (reply) {
+        await save(user, name, channel, "user", text);
+        await save(user, name, channel, "assistant", reply);
+        return { reply };
+      }
+    }
+  }
+
+  // 1 ter) Questions simples : réponse directe depuis G37, sans l'IA (exacte, instantanée, n'use pas le quota).
+  if (!body.image && !body.audio && text.length <= 90 && !/\b(pourquoi|why|comment|how|que faire|quoi faire|cause|r[ée]par\w*|probl[eè]me|panne|issue|fault)\b/i.test(text)
+      && !/\b(passe[rz]?|remet\w*|change[rz]?|mets?|mettre|modifie[rz]?|corrige[rz]?|annule\w*|programme[rz]?|d[ée]cale[rz]?|ajoute[rz]?|enl[eè]ve[rz]?|set|put)\b/i.test(text)) {
+    let quick: string | null = null;
+    const t = normalize(text).toLowerCase();
+    const mcs = [...new Set(extractMachines(text))];
+    const gear = t.match(/\b([gh])\s*-?\s*(\d{2,3})\b/);
+    if (/^\W*(aide|help|menu|commandes?)\W*$/.test(t)) quick = await command("!aide");
+    else if (gear && /\b(stock|combien|reste|dispo\w*|available|pieces?|pi[eè]ces?)\b/.test(t) && !parseCountQuery(text)) quick = await command(`!stock ${gear[1]}${gear[2]}`);
+    else if (mcs.length === 1 && /\b(etat|état|status|statut|marche|arr[eê]t\w*|running|stopp?ed|pignons?|gears?|count|maintenance|clg|info\w*|fiche|o[uù] en est|comment va)\b/.test(t) && !parseCountQuery(text)) quick = await command(`!mc ${mcs[0]}`);
+    if (quick) {
+      await save(user, name, channel, "user", text);
+      await save(user, name, channel, "assistant", quick);
+      return { reply: quick };
+    }
+  }
 
   // 2) Limite par personne (le quota gratuit de Google est partagé par toute l'équipe).
   const limit = Number(await config("wa.chat_daily_limit")) || 30;

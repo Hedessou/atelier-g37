@@ -144,6 +144,8 @@ export async function command(text: string): Promise<string | null> {
   const t = text.trim();
   if (/^!(aide|help)\b/i.test(t)) {
     return ["*🤖 Commandes du robot G37*", "• !rapport — rapport du jour", "• !mc 22 — état de la machine 22", "• !stock G41 — stock d'un pignon ou d'un article (ex. !stock belt 1600)",
+      "• En privé : « état mc 22 », « stock G41 », « quels pignons pour count 30 rf 12 » (réponse immédiate)",
+      "• En privé (personnes autorisées) : « counts 1 30, 2 30, 7 20 » — plusieurs counts d'un coup, avec confirmation",
       "• Photo de fiche Count change (légende !test = essai sans enregistrer)", "• « front rollers greasing mc 1 to 8 » — graissage enregistré",
       "• « Arrivé de 2 belt 1600 » / « Sortie de 1 belt 1600 » — magasin",
       "• *? question* — l'assistant G37 répond (ex. « ? Mc 25 air pressure low que vérifier »)",
@@ -228,7 +230,38 @@ async function detectRepeatedFaults() {
   await setConfig("wa.fault_scan_at", now);
 }
 
+// ---------- Résumé du matin, EN PRIVÉ pour l'admin (jamais dans un groupe) ----------
+// Du lundi au samedi, à partir de 7 h (heure du Bénin), une fois par jour.
+async function morningDigest() {
+  const now = new Date(Date.now() + 3600_000);
+  const day = beninDay();
+  if (now.getUTCDay() === 0 || now.getUTCHours() < 7 || now.getUTCHours() >= 12) return;
+  const owners = await sql`SELECT phone, name FROM wa_people WHERE level = 'owner' AND active AND phone IS NOT NULL`;
+  if (!owners.length || !(await once(`wa-digest:${day}`))) return;
+  const [machines, gears, items, pending] = await Promise.all([
+    sql`SELECT machine_no, status, stop_reason, stopped_since, run_count, next_maintenance, maint_planned_by FROM machines WHERE machine_no BETWEEN 1 AND 28 ORDER BY machine_no`,
+    sql`SELECT gear_type, teeth, stock FROM gears WHERE stock < 6 AND (gear_type = 'G' OR teeth >= 89) ORDER BY gear_type, teeth`,
+    sql`SELECT name, quantity, minimum_quantity, unit FROM stock_items WHERE minimum_quantity > 0 AND quantity < minimum_quantity ORDER BY name LIMIT 15`,
+    sql`SELECT machine_no, new_g, new_h, count_label FROM gear_change_requests WHERE status = 'pending' ORDER BY machine_no`,
+  ]);
+  const L: string[] = [`*☀️ Résumé G37 — ${ddmm(day)}* _(privé)_`];
+  const stopped = machines.filter((m) => m.status === "arret");
+  if (stopped.length) L.push("", `*🔴 À l'arrêt (${stopped.length})* : ${stopped.map((m) => `Mc ${m.machine_no}${m.stop_reason ? ` (${m.stop_reason})` : ""}${m.stopped_since ? ` ${when(diff(beninDay(new Date(m.stopped_since)), day)).replace("retard ", "depuis ")}` : ""}`).join(", ")}`);
+  const todayM = machines.filter((m) => m.next_maintenance && isoDay(m.next_maintenance) === day && m.maint_planned_by);
+  L.push("", todayM.length ? `*🧹 Maintenance programmée aujourd'hui* : ${todayM.map((m) => `Mc ${m.machine_no} (par ${m.maint_planned_by})`).join(", ")}` : "*🧹 Aucune maintenance programmée aujourd'hui.*");
+  const late = machines.filter((m) => m.status !== "arret" && m.next_maintenance && diff(isoDay(m.next_maintenance), day) < 0);
+  if (late.length) L.push(`*⏰ Maintenances en retard* : ${late.map((m) => `Mc ${m.machine_no} (${ddmm(isoDay(m.next_maintenance))})`).join(", ")}`);
+  const noCount = machines.filter((m) => m.status !== "arret" && m.run_count == null).map((m) => Number(m.machine_no));
+  if (noCount.length) L.push("", `*❓ Count inconnu* : ${noCount.map((n) => `Mc ${n}`).join(", ")}`, `↳ Réponds-moi par exemple : *counts ${noCount.slice(0, 3).map((n) => `${n} 30`).join(", ")}*`);
+  if (pending.length) L.push("", `*⏳ Count change en attente du bouton Fait* : ${pending.map((r) => `Mc ${r.machine_no} → G${r.new_g}/H${r.new_h}${r.count_label ? ` (${r.count_label})` : ""}`).join(", ")}`);
+  if (gears.length) L.push("", `*⚙️ Pignons sous 6 pièces* (moins d'une machine) : ${gears.map((g) => `${g.gear_type}${g.teeth} (${g.stock})`).join(", ")}`);
+  if (items.length) L.push(`*📦 Articles sous le seuil* : ${items.map((i) => `${i.name} ${i.quantity}/${i.minimum_quantity}${i.unit ? ` ${i.unit}` : ""}`).join(" ; ")}`);
+  const text = L.join("\n");
+  for (const o of owners) await sql`INSERT INTO wa_outbox (text, to_phone) VALUES (${text}, ${o.phone})`;
+}
+
 export async function tick(): Promise<{ ok: true }> {
+  await morningDigest().catch((e) => console.error("Résumé du matin:", e));
   await remindPendingChanges();
   await detectRepeatedFaults();
   await eveningRun().catch((e) => console.error("Question du soir:", e));
