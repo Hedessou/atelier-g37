@@ -5,7 +5,8 @@ export const DRAFT_K = 16.068; // draft = 16,068 × H ÷ G (même formule que l'
 export const RANGE = { G: [30, 65], H: [89, 113] } as const;
 export const PER_MACHINE = 6;
 export const draftOf = (g: number, h: number) => (DRAFT_K * h) / g;
-export const pct = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(1).replace(".", ",")} %`;
+// Marge en % avec 2 décimales (« +0,01 % ») : au dixième, un écart de 0,04 % s'affichait « +0,0 % ».
+export const pct = (x: number) => { const v = Math.round(x * 10000) / 100; return `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(2).replace(".", ",")} %`; };
 export const fmt2 = (x: number) => x.toFixed(2);
 
 export type Stock = Map<string, number>; // "G41" -> pièces disponibles (stock moins changements déjà en attente)

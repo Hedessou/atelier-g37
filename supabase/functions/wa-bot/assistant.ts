@@ -3,6 +3,7 @@
 // (panne, remise en marche, maintenance, magasin, graissage) avec confirmation Oui / Non.
 import { beninDay, config, ddmm, diff, isoDay, once, outbox, sql, when } from "./db.ts";
 import { availableStock, draftOf, fmt2, pct, proposals } from "./gears.ts";
+import { countAnswer, countContext, looksLikeQuestion, parseCountQuery } from "./countcalc.ts";
 import { gemini, QuotaError, quotaMessage, type Part, type Turn } from "./gemini.ts";
 import { extractMachines, normalize, parseMessage } from "./parse.ts";
 import { buildEdits, EDITS_HELP, EDITS_SCHEMA, type Intent } from "./edits.ts";
@@ -23,7 +24,7 @@ const NO = /^\s*(non|no|n|nope|annule\w*|cancel\w*|stop|laisse\w*|pas besoin|❌
 // ---------- Données de l'atelier ----------
 async function snapshot(today: string): Promise<string> {
   const [machines, faults, works, pendingGears] = await Promise.all([
-    sql`SELECT machine_no, status, stop_reason, stopped_since, run_g, run_h, run_count, next_maintenance FROM machines ORDER BY machine_no`,
+    sql`SELECT machine_no, status, stop_reason, stopped_since, run_g, run_h, run_count, run_hank, next_maintenance FROM machines ORDER BY machine_no`,
     sql`SELECT machine_id, issue, opened_at, reported_by FROM failures WHERE status <> 'resolue' ORDER BY opened_at`,
     sql`SELECT machine_no, title FROM works WHERE status = 'todo' ORDER BY created_at`,
     sql`SELECT machine_no, new_g, new_h, count_label FROM gear_change_requests WHERE status = 'pending'`,
@@ -31,7 +32,7 @@ async function snapshot(today: string): Promise<string> {
   const lines = machines.map((m) => {
     const no = Number(m.machine_no);
     const parts = [`Mc ${no}: ${STATUS_FR[m.status] ?? m.status}${m.status !== "service" && m.stop_reason ? ` (${m.stop_reason})` : ""}`,
-      `G${m.run_g ?? "?"}/H${m.run_h ?? "?"}${m.run_count != null ? ` count ${Number(m.run_count)}` : ""}`];
+      `G${m.run_g ?? "?"}/H${m.run_h ?? "?"}${m.run_g && m.run_h ? ` draft ${(16.068 * Number(m.run_h) / Number(m.run_g)).toFixed(2)}` : ""}${m.run_count != null ? ` count ${Number(m.run_count)}` : " count inconnu"}${m.run_hank != null ? ` hank ${Number(m.run_hank).toFixed(3)}` : ""}`];
     if (m.next_maintenance) { const d = isoDay(m.next_maintenance); parts.push(`maintenance clg ${ddmm(d)} (${when(diff(d, today))})`); }
     const f = faults.filter((x) => Number(String(x.machine_id).replace(/\D/g, "")) === no);
     if (f.length) parts.push(`pannes ouvertes: ${f.map((x) => `${x.issue} depuis ${ddmm(beninDay(new Date(x.opened_at)))} (signalé par ${x.reported_by ?? "?"})`).join("; ")}`);
@@ -106,7 +107,7 @@ const FR_EN: Record<string, string> = {
 const STOP_EN = new Set(["the", "and", "for", "what", "how", "why", "this", "that", "with", "please", "est", "les", "des", "une", "pour", "quoi",
   "comment", "pourquoi", "dans", "sur", "avec", "faire", "fait", "qui", "que", "quel", "quelle", "aide", "help", "dois", "doit", "verifier",
   "check", "mc", "rf", "machine", "affiche", "show", "shows", "message", "il", "elle", "on", "je", "tu", "nous", "vous", "de", "du", "la", "le"]);
-const plain = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const plain = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
 export async function knowledge(question: string): Promise<string> {
   const words = new Set<string>();
@@ -186,7 +187,13 @@ Photo d'écran ou de machine : lis le message ou le code d'erreur, explique-le e
 résume ce que tu lis et dis que pour lancer le changement il faut l'envoyer dans le groupe Ring Fram Local Team.
 Note vocale : comprends-la, mets ce que tu as compris dans "heard", et réponds normalement.
 
-Calculs : draft = 16,068 × H ÷ G. Count ≈ R. hank × draft (approximatif). Utilise les CALCULS EXACTS fournis s'il y en a ; ne recalcule pas toi-même des couples G/H.
+Calculs : draft = 16,068 × H ÷ G. Count = hank × draft. Le count et le hank de chaque machine dans les DONNÉES sont tenus à jour
+par la base à chaque changement de pignons : utilise-les tels quels. « count inconnu » = dis-le et demande le count ou le hank, n'en invente pas.
+Machine : parle UNIQUEMENT de la MACHINE CONCERNÉE indiquée (sauf si la personne en nomme une autre).
+« Remets / passe au gear précédent », « annule le changement » sur une machine = demande de MODIFICATION (pas un calcul) :
+propose la modification des pignons (edits) avec les anciens pignons cités ou, à défaut, demande lesquels. Si un bloc CALCULS EXACTS est fourni, RECOPIE ses propositions,
+ses marges (ex. « +0,01 % ») et ses listes de dents ✅ disponibles / ❌ non disponibles telles quelles ; ne recalcule jamais toi-même des couples G/H
+et n'en invente pas.
 
 Actions (champ "action") : seulement si ACTIONS AUTORISÉES = oui ET que la personne annonce un fait à enregistrer (pas une question) :
 - close : machine remise en marche / panne réglée → command « Mc 25 running » ; mets dans "solution" ce qui a été fait si la personne l'a dit.
@@ -371,18 +378,38 @@ export async function chat(body: ChatIn, exec: Exec): Promise<ChatOut> {
   const question = [text, heard].filter(Boolean).join(" ");
   const sendAudio = !!body.audio && !heard; // transcription ratée : on envoie l'audio à l'IA
 
+  // 3 bis) Question de count / draft / pignons : réponse calculée directement (exacte, et marche même sans l'IA).
+  const cq = !body.image ? parseCountQuery(question) : null;
+  if (cq && looksLikeQuestion(question)) {
+    const reply = await countAnswer(cq);
+    await save(user, name, channel, "user", body.audio ? `[vocal] ${question}` : question);
+    await save(user, name, channel, "assistant", reply);
+    return { reply };
+  }
+
   // 4) Contexte : données de l'atelier + manuel + calculs exacts.
   const today = beninDay();
   const past = await history(user);
   const recentText = past.slice(-4).map((t) => (t.parts[0] as { text: string }).text).join("\n");
-  const nums = [...new Set([...extractMachines(`${question}\n${body.quoted ?? ""}`), ...extractMachines(recentText)])];
+  // Machine(s) concernée(s) : celles du message (ou du message cité) ; sinon celles du DERNIER message qui en cite une.
+  // (Avant : toutes les machines des 4 derniers messages → l'IA confondait la Mc 13 et la Mc 22.)
+  let nums = [...new Set(extractMachines(`${question}\n${body.quoted ?? ""}`))];
+  let focusFrom = "message";
+  if (!nums.length) {
+    for (const t of past.slice(-6).reverse()) {
+      const m = extractMachines((t.parts[0] as { text: string }).text || "");
+      if (m.length) { nums = [...new Set(m)]; focusFrom = "conversation"; break; }
+    }
+  }
+  void recentText;
   const [snap, details, stock, manual, fixes, calc] = await Promise.all([
     snapshot(today), nums.length ? machineDetails(nums, today) : Promise.resolve(""), stockText(),
-    knowledge(`${question} ${screen} ${body.quoted ?? ""}`), similarFixes(`${question} ${screen}`), gearCalc(question),
+    knowledge(`${question} ${screen} ${body.quoted ?? ""}`), similarFixes(`${question} ${screen}`), countContext(question).then((c) => c || gearCalc(question)),
   ]);
   const context = [
     `Aujourd'hui : ${today} (${['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'][new Date(today + 'T00:00:00Z').getUTCDay()]}, heure du Bénin). Personne : ${name}. ACTIONS AUTORISÉES = ${canAct ? "oui" : "non"}. MODIFICATIONS AUTORISÉES = ${canEdit ? `oui (${LEVEL_FR[person!.level]})` : "non"}.`,
     `== DONNÉES ATELIER G37 : MACHINES ==\n${snap}`,
+    nums.length ? `== MACHINE CONCERNÉE == ${nums.map((n) => `Mc ${n}`).join(", ")} (${focusFrom === "message" ? "citée dans ce message" : "dernière machine citée dans la conversation"}). Ne parle d'aucune autre machine sauf si la personne la nomme.` : "",
     details && `== DÉTAIL DES MACHINES CITÉES ==\n${details}`,
     fixes && `== PANNES SEMBLABLES DÉJÀ RÉGLÉES ==\n${fixes}`,
     `== STOCK ==\n${stock}`,

@@ -13,7 +13,11 @@ const addDays = (day: string, n: number) => { const d = new Date(day + "T00:00:0
 
 /** Machines prévues en maintenance ce jour-là et pas encore enregistrées comme faites. */
 export async function plannedToday(day = beninDay()): Promise<number[]> {
-  const planned = await sql`SELECT machine_no FROM machines WHERE next_maintenance = ${day}::date AND maint_planned_by IS NOT NULL`;
+  // Prévues aujourd'hui (programmées) + EN RETARD : date dépassée depuis moins de 14 jours, machine pas à l'arrêt.
+  // (Avant : seulement « aujourd'hui » → une machine en retard n'était plus jamais demandée.)
+  const planned = await sql`SELECT machine_no FROM machines
+    WHERE (next_maintenance = ${day}::date AND maint_planned_by IS NOT NULL)
+       OR (next_maintenance < ${day}::date AND next_maintenance >= ${day}::date - 14 AND coalesce(status, '') <> 'arret')`;
   const works = await sql`SELECT machine_no, title FROM works WHERE status = 'todo' AND (created_at + interval '1 hour')::date = ${day}::date`;
   const all = new Set<number>([...planned.map((r) => Number(r.machine_no)), ...works.filter((w) => isMaintWork(String(w.title))).map((w) => Number(w.machine_no))]);
   if (!all.size) return [];
@@ -39,7 +43,7 @@ async function minutesOf(key: string, def: string): Promise<number> {
 function questionFor(p: Person, today: number[], askTomorrow: boolean, tier: number, planned: number[]): string {
   const first = p.name.split(" ")[0];
   const parts: string[] = [`🤖 *Bonsoir ${first}*, ici le robot G37.${tier > 1 ? " (Le superviseur n'a pas encore répondu.)" : ""}`];
-  if (today.length) parts.push(`1️⃣ La *maintenance ${list(today)}* (prévue aujourd'hui) est-elle *finie* ?`);
+  if (today.length) parts.push(`1️⃣ La *maintenance ${list(today)}* (prévue aujourd'hui ou en retard) est-elle *finie* ?`);
   const t2 = today.length ? "2️⃣" : "📅";
   if (askTomorrow && planned.length) parts.push(`${t2} Demain, *${planned.map(rf).join(", ")}* ${planned.length > 1 ? "sont prévues" : "est prévue"} en maintenance. *C'est confirmé ?* (sinon, donne la bonne machine)`);
   else if (askTomorrow) parts.push(`${t2} *Quelle machine passe en maintenance demain ?*`);
