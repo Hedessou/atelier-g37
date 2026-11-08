@@ -8,13 +8,13 @@
 //   GET  g37/ask_audio  (app)    ?id= — voix de la question (WAV)
 // Le reste du serveur de l'app est repris tel quel depuis GitHub (version du 27/10/2026, la même que la fonction « api » en ligne) :
 // mêmes règles, mêmes droits, mêmes notifications que les boutons de l'app, sans toucher à la fonction « api ».
-import { sql } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/48803080ff763721c0470f9c58fd3193d12a4445/supabase/functions/api/lib/db.ts";
-import { getServerUserSession } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/48803080ff763721c0470f9c58fd3193d12a4445/supabase/functions/api/lib/session.ts";
-import { json } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/48803080ff763721c0470f9c58fd3193d12a4445/supabase/functions/api/lib/http.ts";
-import { broadcastChanged } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/48803080ff763721c0470f9c58fd3193d12a4445/supabase/functions/api/lib/supa.ts";
-import { notifyRoles, notifyUsers } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/48803080ff763721c0470f9c58fd3193d12a4445/supabase/functions/api/lib/notify.ts";
-import { g37 } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/48803080ff763721c0470f9c58fd3193d12a4445/supabase/functions/api/shared/g37.ts";
-import { applyOnce, loadMe } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/48803080ff763721c0470f9c58fd3193d12a4445/supabase/functions/api/routes/mutate.ts";
+import { sql } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/e17fec86e37db80e21705589a94372c37ad36316/supabase/functions/api/lib/db.ts";
+import { getServerUserSession } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/e17fec86e37db80e21705589a94372c37ad36316/supabase/functions/api/lib/session.ts";
+import { json } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/e17fec86e37db80e21705589a94372c37ad36316/supabase/functions/api/lib/http.ts";
+import { broadcastChanged } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/e17fec86e37db80e21705589a94372c37ad36316/supabase/functions/api/lib/supa.ts";
+import { notifyRoles, notifyUsers } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/e17fec86e37db80e21705589a94372c37ad36316/supabase/functions/api/lib/notify.ts";
+import { g37 } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/e17fec86e37db80e21705589a94372c37ad36316/supabase/functions/api/shared/g37.ts";
+import { applyOnce, loadMe } from "https://raw.githubusercontent.com/Hedessou/atelier-g37/e17fec86e37db80e21705589a94372c37ad36316/supabase/functions/api/routes/mutate.ts";
 
 const beninDay = (d = new Date()) => new Date(d.getTime() + 3600_000).toISOString().slice(0, 10);
 const ddmm = (day: string) => `${day.slice(8, 10)}/${day.slice(5, 7)}`;
