@@ -4,7 +4,7 @@
 // v2 (01/11/2026) : relecture par l'IA des messages non compris · GET evening (question de 16h30) · POST evening-dry.
 // En-tête obligatoire : x-wa-key.
 import { addDays, broadcastChanged, config, ddmm, diff, isoDay, machineId, newId, rf, sql, when } from "./db.ts";
-import { parseMessage, solutionText, workTitle } from "./parse.ts";
+import { extractMachines, isOtherDept, parseMessage, solutionText, workTitle } from "./parse.ts";
 import { chat, knowledge, transcribe } from "./assistant.ts";
 import { availableStock, draftOf, fmt2, PER_MACHINE, pct, proposals, proposeHMin, RANGE } from "./gears.ts";
 import { gemini, QuotaError, quotaMessage } from "./gemini.ts";
@@ -55,6 +55,11 @@ async function openCountWork(n: number, at: Date) {
 }
 
 async function handleText(m: Meta, text: string, quoted: string | null, solution: string | null = null, smart = true): Promise<HandleResult> {
+  // Seulement les Ring Frames : un message (ou une réponse à un message) sur le TFO, le SSM, le winding… est ignoré (08/11/2026).
+  if (isOtherDept(text) || (quoted && isOtherDept(quoted) && !extractMachines(text).length)) {
+    await sql`UPDATE wa_messages SET action = 'ignore', result = ${sql.json({ reason: "autre atelier" })} WHERE msg_id = ${m.msgId}`;
+    return { action: "ignore", machines: [], title: "", done: [], reply: null };
+  }
   // Count change fait (« RF 6 count change finish ») ou réponse « 1 / 2 » à la question du robot (27/10/2026).
   const cc = await countChangeText(m, text, quoted);
   if (cc) {
@@ -205,17 +210,21 @@ async function ingest(body: Msg & { solution?: string | null; phone?: string | n
 // ---------- Fiche « Count change slip » en photo ----------
 
 type Gv = number | "same" | null; // « same » = on garde le pignon actuel de la machine
-type Slip = { isSlip: boolean; machines: number[]; count: string | null; hank: number | null; draft: number | null; g: Gv; h: Gv };
+type Slip = { isSlip: boolean; ringFrame?: boolean; machines: number[]; count: string | null; hank: number | null; draft: number | null; g: Gv; h: Gv };
 
-const SLIP_PROMPT = `You read photos from a spinning mill (ring frames). Decide if the photo is a "COUNT CHANGE SLIP" form.
-If it is, read the handwritten values. Rules:
+const SLIP_PROMPT = `You read photos from a spinning mill. Decide if the photo is a RING FRAME "COUNT CHANGE SLIP" form
+(a paper form with fields like Machine NO, COUNT, R. HANK, DRAFT, G, H).
+isSlip = false for anything else: machine screens, yarn/cone photos, TFO / twisting / SSM / winding / carding / simplex / draw frame sheets,
+production or manpower reports, or a form where COUNT and the draft gears (DRAFT, G, H) are not written.
+ringFrame = false if the photo is about another machine than a ring frame (TFO, SSM, winder, card…).
+If it is a slip, read the handwritten values. Rules:
 - If a value is crossed out and another value is written next to it, return ONLY the new value (not crossed out).
 - A small "T" after a number means "teeth": ignore the T.
 - "Machine NO" can list several machines ("22 and 26", "3&4", "5,6") → return all numbers.
 - count: the text exactly as written (e.g. "60 CCW", "12 KW PRO", "80 CCLX").
 - hank: the R. HANK number. draft: the DRAFT number. g: the G number. h: the H number.
 - If G or H is written as "same" (or "idem", "same as before", "-", "do"), return the string "same" for it.
-Answer ONLY with JSON: {"isSlip": boolean, "machines": [int], "count": string|null, "hank": number|null, "draft": number|null, "g": int|"same"|null, "h": int|"same"|null}`;
+Answer ONLY with JSON: {"isSlip": boolean, "ringFrame": boolean, "machines": [int], "count": string|null, "hank": number|null, "draft": number|null, "g": int|"same"|null, "h": int|"same"|null}`;
 
 async function readSlip(b64: string, mime: string): Promise<Slip> {
   let txt: string;
@@ -230,7 +239,7 @@ async function readSlip(b64: string, mime: string): Promise<Slip> {
   const gv = (v: unknown): Gv => (typeof v === "string" && /same|idem|inchang|^\s*(-|do)\s*$/i.test(v) ? "same" : int(v));
   const num = (v: unknown) => (v != null && Number.isFinite(Number(String(v).replace(",", "."))) ? Number(String(v).replace(",", ".")) : null);
   return {
-    isSlip: !!raw.isSlip,
+    isSlip: !!raw.isSlip, ringFrame: raw.ringFrame !== false,
     machines: (Array.isArray(raw.machines) ? raw.machines : []).map(int).filter((n: number | null): n is number => !!n && n >= 1 && n <= 28),
     count: raw.count ? String(raw.count).replace(/\s+/g, " ").trim().toUpperCase().slice(0, 40) : null,
     hank: num(raw.hank), draft: num(raw.draft), g: gv(raw.g), h: gv(raw.h),
@@ -268,6 +277,15 @@ async function slip(body: Msg & { image?: string; mime?: string; caption?: strin
     await sql`UPDATE wa_messages SET action = 'error', result = ${sql.json({ error: String(e) })} WHERE msg_id = ${m.msgId}`;
     const r = caption ? await handleText(m, caption, null) : { action: "error", error: String(e) };
     return { status: 200, data: { ...r, reply: warn ?? (r as { reply?: string }).reply ?? null } };
+  }
+  // Une fiche n'est prise que si c'est bien un Ring Frame et qu'elle porte le count ET les pignons (au moins 2 parmi draft, G, H) (08/11/2026).
+  const filled = [s.draft, s.g, s.h].filter((v) => v != null).length;
+  const recentOther = dry ? [] : await sql`SELECT body FROM wa_messages WHERE group_name = ${m.group} AND sender = ${m.sender} AND msg_id <> ${m.msgId}
+    AND received_at BETWEEN ${m.at}::timestamptz - interval '3 minutes' AND ${m.at}::timestamptz + interval '3 minutes'`;
+  const otherCtx = isOtherDept(caption) || recentOther.some((r) => isOtherDept(String(r.body ?? "")));
+  if (s.isSlip && (s.ringFrame === false || otherCtx || !s.count || filled < 2)) {
+    console.log("Fiche refusée :", JSON.stringify({ s, otherCtx, filled }));
+    s = { ...s, isSlip: false };
   }
   if (dry && (!s.isSlip || !s.machines.length)) return { status: 200, data: { action: "ignore", reply: "🧪 Test : ce n'est pas une fiche Count change (ou numéro de machine illisible)." } };
   // Pas une fiche de count change : on traite seulement la légende comme un message normal.

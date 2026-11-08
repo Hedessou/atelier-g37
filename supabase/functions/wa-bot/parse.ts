@@ -15,6 +15,13 @@ const MACHINE_RE = new RegExp(String.raw`\b${PREFIX}\s*[:#.\-]?\s*${NUMWORD}[:#.
 // Numéro écrit AVANT : « come to 17 mc », « 22 rf », « 5 m/c » (pas « 2 machines », qui est un nombre de machines).
 const MACHINE_AFTER_RE = /(?<![\d.,:])\b(\d{1,2})\s*(?:r\s*\/\s*f|rf|m\s*\/\s*c|mc)\b/gi;
 
+// Mots qui désignent clairement un Ring Frame (08/11/2026) : RF, R/F, rf mc, ringframe, ringfram, ring frame, rif…
+export const RF_WORD_RE = /(?<![\p{L}\p{N}])(?:r\s*[\/.]\s*f\.?|rf|rif|ring\s*fra?m\w*|continus?)(?![\p{L}])/iu;
+// Autres machines de la filature : un message sur elles n'est PAS pour G37 (« TFO no 5 », « SSM No. 1 », « carding 3 »…).
+export const OTHER_DEPT_RE = /(?<![\p{L}])(?:tfo|t\.f\.o|two\s*for\s*one|twist\w*|ssm|winding|winder|autoconer|auto\s*coner|coner|cone\s*winding|jacobi|card(?:ing|s)?|c\s*\/\s*m|draw\s*frame|drawframe|d\s*\/\s*f|simplex|speed\s*frame|roving|comber|combing|lap\s*former|blow\s*room|blowroom|open\s*end|o\s*\/\s*e|rotor|reeling|doubling|assembly\s*winder|compressor|boiler|genset|generator|humidification|h\s*plant|packing|warping|weaving|loom)(?![\p{L}])/iu;
+/** Le message parle d'une autre machine que les Ring Frames (et ne cite aucun RF) : à ignorer. */
+export const isOtherDept = (text: string) => OTHER_DEPT_RE.test(normalize(text)) && !RF_WORD_RE.test(normalize(text));
+
 export function normalize(text: string): string {
   return text
     .replace(/\u00a0/g, " ")
@@ -53,7 +60,9 @@ export function withoutMachineRefs(text: string): string {
 }
 
 const CHANGE_RE = /\b(count\s*chang\w*|count\s+(?:is\s+)?(?:going\s+to\s+be|will\s+be|to\s+be)\s+chang\w*|count\s*[:\-=]|lot\s*chang\w*|[gh]\s*gears?\s*chang\w*|gears?\s*chang\w*|changing|slip|pignons?|changement|article\s*chang\w*)\b/i;
-const CLOSE_RE = /(?<![\p{L}\p{N}])(attend(?:ed)?|(?:re)?start(?:ed|ing|s)?|running|run|working|works|ok|okay|done|fixed|solved|resolved|repaired|finish(?:ed)?|r[ée]gl[ée]e?|r[ée]solue?|r[ée]par[ée]e?|d[ée]marr\p{L}*|red[ée]marr\p{L}*|en marche|marche|fonctionne|c'?est bon)(?![\p{L}\p{N}])/iu;
+const CLOSE_RE = /(?<![\p{L}\p{N}])(attend(?:ed)?|(?:re)?start(?:ed|ing|s)?|running|run|working|works|ok|okay|done|fixed|solved|resolved|repaired|finish(?:ed)?|r[ée]gl[ée]e?|r[ée]solue?|r[ée]par[ée]e?|d[ée]marr\p{L}*|red[ée]marr\p{L}*|en marche|marche|fonctionne|c'?est bon|good(?!\s+(?:morning|evening|afternoon|night|day|job))|ready)(?![\p{L}\p{N}])/iu;
+// « come to start », « ready to start », « you can start », « ok to start » : la machine est réparée, l'opérateur peut la démarrer.
+const START_NOW_RE = /\b(?:come\s+(?:and\s+|to\s+)?start|ready\s+(?:to\s+|for\s+)?start\w*|(?:you\s+)?can\s+start|ok\s+(?:to|for)\s+start|is\s+ready|now\s+ready|start\s+it)\b/gi;
 // « problem solved », « issue fixed », « panne réglée » : c'est une remise en marche, pas une nouvelle panne.
 const SOLVED_RE = /\b(?:the\s+)?(?:problems?|issues?|fault|panne|probl[eè]me)\s+(?:is\s+|has\s+been\s+|est\s+|a\s+été\s+)?(solved|resolved|fixed|clear(?:ed)?|ok|r[ée]gl[ée]e?|r[ée]solue?)/giu;
 // Mots qui montrent une demande ou un problème : le message n'est alors pas une remise en marche.
@@ -73,7 +82,9 @@ export function classifyText(text: string): Kind {
     // « Rf 10 maintenance clg finish » → maintenance faite ; « maintenance clg start » → rien à enregistrer.
     return MAINT_DONE_RE.test(rest) ? "maint" : "ignore";
   }
-  const solved = rest.replace(SOLVED_RE, "$1");
+  // « come to start », « ready to start » : remise en marche, même avec « please » (sauf négation).
+  if (new RegExp(START_NOW_RE.source, "i").test(rest) && !/\b(not|pas|can'?t|cannot|n'?t)\b|n't/i.test(rest)) return "close";
+  const solved = rest.replace(SOLVED_RE, "$1").replace(START_NOW_RE, " started ");
   // « working on it », « in progress », « will start » : travail en cours, la panne reste ouverte.
   const pending = /\b(working\s+on|on\s+it|in\s+progress|en\s+cours|wait\w*|attente|soon|going\s+to|will|bient[oô]t)\b/i.test(solved);
   const close = CLOSE_RE.test(solved) && !REQUEST_RE.test(solved) && !pending;
@@ -142,11 +153,14 @@ export function workTitle(p: Parsed, n: number): string {
 }
 
 export function parseMessage(text: string, quoted?: string | null): Parsed {
+  const none: Parsed = { kind: "ignore", machines: [], title: "", fromQuote: false };
+  if (isOtherDept(text)) return none;
   let kind = classifyText(text);
   let machines = extractMachines(text);
   let fromQuote = false;
   // Réponse du type « it's running » / « done » à un message qui citait la machine.
   if (!machines.length && quoted && (kind === "close" || kind === "change" || kind === "maint")) {
+    if (isOtherDept(quoted)) return none;
     machines = extractMachines(quoted);
     fromQuote = machines.length > 0;
     // « done » en réponse à « RF 10 maintenance clg » = maintenance faite.
