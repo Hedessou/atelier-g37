@@ -1,8 +1,8 @@
 // Assistant technique G37 sur WhatsApp : questions en privé (ou « ? » dans Ring Fram Local Team),
 // photos d'écran, notes vocales. Répond avec les données de l'atelier + l'IA, propose d'enregistrer
 // (panne, remise en marche, maintenance, magasin, graissage) avec confirmation Oui / Non.
-import { beninDay, config, ddmm, diff, isoDay, once, outbox, sql, when } from "./db.ts";
-import { availableStock, draftOf, fmt2, pct, proposals } from "./gears.ts";
+import { beninDay, config, ddmm, diff, isoDay, once, outbox, setConfig, sql, when } from "./db.ts";
+import { availableStock, draftOf, fmt2, pct, proposals, proposeHMin } from "./gears.ts";
 import { countAnswer, countContext, looksLikeQuestion, parseCountQuery } from "./countcalc.ts";
 import { gemini, QuotaError, quotaMessage, type Part, type Turn } from "./gemini.ts";
 import { extractMachines, normalize, parseMessage } from "./parse.ts";
@@ -162,7 +162,7 @@ async function gearCalc(text: string): Promise<string> {
   if (d) {
     const target = Number(d[1]);
     const stock = await availableStock([]);
-    const p = proposals(target, { g: null, h: null }, stock, 1);
+    const p = proposals(target, { g: null, h: null }, stock, 1, await proposeHMin());
     out.push(`Draft ${fmt2(target)} — couples G/H en stock (6 pièces chacun) ${p.close ? "à moins de 1 %" : "les plus proches (aucun à moins de 1 %)"} : ${p.list.map((x) => `G${x.g}/H${x.h} = ${fmt2(x.d)} (${pct(x.err)})`).join(" ; ") || "aucun"}`);
   }
   return out.join("\n");
@@ -305,6 +305,20 @@ export async function chat(body: ChatIn, exec: Exec): Promise<ChatOut> {
   const person: Person | null = await personByPhone(body.phone, user);
   await learnName(person, body.name);
   const canEdit = channel === "private" && !!person && person.level !== "none";
+
+  // Commande de l'admin (en privé) : autoriser / bloquer les propositions de pignons H75–H88.
+  //   « autoriser H75 » · « bloquer H75 » · « état H75 »
+  const hCmd = text.match(/^\s*(autoris\w*|activ\w*|bloqu\w*|d[ée]sactiv\w*|interdi\w*|[ée]tat|status)\s+(?:les\s+)?(?:pignons?\s+)?h\s*75(?:\s*[-–à]\s*(?:h\s*)?88)?\s*$/i);
+  if (hCmd && channel === "private") {
+    if (person?.level !== "owner") return { reply: "⛔ Seul l'administrateur peut autoriser ou bloquer les pignons H75–H88." };
+    const verb = hCmd[1].toLowerCase();
+    if (/^(autoris|activ)/.test(verb)) await setConfig("gears.h_low_allowed", "oui");
+    else if (/^(bloqu|d[ée]sactiv|interdi)/.test(verb)) await setConfig("gears.h_low_allowed", "non");
+    const on = (await proposeHMin()) < 89;
+    return { reply: on
+      ? "✅ Pignons *H75 à H88* : *autorisés*. Le robot peut maintenant les proposer dans les calculs de count et les fiches.\nÉcris *bloquer H75* pour revenir en arrière."
+      : "🔒 Pignons *H75 à H88* : *pas encore proposés* par le robot (ils restent visibles en stock et utilisables à la main).\nÉcris *autoriser H75* quand tu veux qu'il les propose." };
+  }
 
   let preHeard = ""; // note vocale déjà transcrite à l'étape 0
   // 0) Réponse à la question du soir (« la maintenance de la Mc 3 est-elle finie ? »), par écrit ou par note vocale.

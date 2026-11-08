@@ -6,7 +6,7 @@
 import { addDays, broadcastChanged, config, ddmm, diff, isoDay, machineId, newId, rf, sql, when } from "./db.ts";
 import { parseMessage, solutionText, workTitle } from "./parse.ts";
 import { chat, knowledge, transcribe } from "./assistant.ts";
-import { availableStock, draftOf, fmt2, PER_MACHINE, pct, proposals, RANGE } from "./gears.ts";
+import { availableStock, draftOf, fmt2, PER_MACHINE, pct, proposals, proposeHMin, RANGE } from "./gears.ts";
 import { gemini, QuotaError, quotaMessage } from "./gemini.ts";
 import { ackOutbox, command, cycleEntry, stockEntry, takeOutbox, tick, watchdog } from "./features.ts";
 import { applyPending, countChangeState, countChangeText, markAsked } from "./countchange.ts";
@@ -362,7 +362,7 @@ async function slip(body: Msg & { image?: string; mime?: string; caption?: strin
     if (unreadable) lines.push(`❌ G ou H illisible ou hors plage (G ${RANGE.G[0]}–${RANGE.G[1]}, H ${RANGE.H[0]}–${RANGE.H[1]})`);
     for (const [k, n] of missing) lines.push(`❌ ${k} : ${Math.max(0, stock.get(k) ?? 0)} en stock (il en faut ${n})`);
     if (target) {
-      const p = proposals(target, { g: ref?.ng ?? null, h: ref?.nh ?? null }, stock, plan.length);
+      const p = proposals(target, { g: ref?.ng ?? null, h: ref?.nh ?? null }, stock, plan.length, await proposeHMin());
       if (p.list.length) {
         lines.push(p.close ? "💡 *Propositions en stock :*" : "💡 *Rien à moins de 1 % ; les plus proches en stock :*");
         p.list.forEach((x, i) => lines.push(`${i + 1}) G${x.g} · H${x.h} → draft ${fmt2(x.d)} (${pct(x.err)})`));

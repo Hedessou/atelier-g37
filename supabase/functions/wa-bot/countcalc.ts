@@ -2,7 +2,7 @@
 // « Quels pignons pour count 40 ? », « Rf 12 passe en 60 CCW », « count 30 hank 0,85 », « draft 36,5 », « G41 H104 donne quoi ? »
 // → draft visé, meilleurs couples G/H avec la marge (+0,01 %), count obtenu, et pour chaque dent : en stock ou non.
 import { sql } from "./db.ts";
-import { availableStock, DRAFT_K, draftOf, PER_MACHINE, RANGE, type Stock } from "./gears.ts";
+import { availableStock, DRAFT_K, draftOf, PER_MACHINE, proposeHMin, RANGE, type Stock } from "./gears.ts";
 import { extractMachines, normalize } from "./parse.ts";
 
 const DEFAULT_HANK = 0.83; // même valeur par défaut que l'écran Calcul de l'app
@@ -74,9 +74,9 @@ function teethList(type: "G" | "H", list: number[]): string {
 type Pair = { g: number; h: number; d: number; err: number };
 
 /** Tous les couples dans la plage, triés par écart au draft visé. */
-function allPairs(target: number): Pair[] {
+function allPairs(target: number, hMin: number): Pair[] {
   const out: Pair[] = [];
-  for (let g = RANGE.G[0]; g <= RANGE.G[1]; g++) for (let h = RANGE.H[0]; h <= RANGE.H[1]; h++) {
+  for (let g = RANGE.G[0]; g <= RANGE.G[1]; g++) for (let h = hMin; h <= RANGE.H[1]; h++) {
     const d = draftOf(g, h);
     out.push({ g, h, d, err: (d - target) / target });
   }
@@ -103,6 +103,7 @@ export async function countAnswer(q: CountQuery): Promise<string> {
   const n = Math.max(1, mcs.length || q.machines.length);
   const need = PER_MACHINE * n;
   const stock: Stock = await availableStock(q.machines);
+  const hMin = await proposeHMin();   // H75–88 seulement si l'admin les a autorisés
   const have = (k: string) => Math.max(0, stock.get(k) ?? 0);
   const okTooth = (k: string) => have(k) >= need;
 
@@ -133,7 +134,7 @@ export async function countAnswer(q: CountQuery): Promise<string> {
   // À écart égal (plusieurs couples donnent le même draft), on montre d'abord ceux dont les dents sont en stock, puis ceux qui gardent un pignon actuel.
   const avail = (p: Pair) => (okTooth(`G${p.g}`) ? 1 : 0) + (okTooth(`H${p.h}`) ? 1 : 0);
   const kept = (p: Pair) => mcs.some((m) => m.g === p.g || m.h === p.h) ? 1 : 0;
-  const pairs = allPairs(target).sort((a, b) => (Math.round(Math.abs(a.err) * 1e5) - Math.round(Math.abs(b.err) * 1e5)) || (avail(b) - avail(a)) || (kept(b) - kept(a)));
+  const pairs = allPairs(target, hMin).sort((a, b) => (Math.round(Math.abs(a.err) * 1e5) - Math.round(Math.abs(b.err) * 1e5)) || (avail(b) - avail(a)) || (kept(b) - kept(a)));
   const best = pairs.slice(0, 5);
   const inStock = pairs.filter((p) => okTooth(`G${p.g}`) && okTooth(`H${p.h}`)).slice(0, 3);
   const cur = mcs.find((m) => m.g && m.h);
@@ -146,8 +147,8 @@ export async function countAnswer(q: CountQuery): Promise<string> {
   lines.push(`🎯 *${q.count != null ? `Count ${q.count}` : `Draft ${fr2(target)}`}*${q.count != null ? ` · hank ${String(hank).replace(".", ",")} (${hankFrom})` : ""}`);
   lines.push(`${T("Draft visé", "Target draft")} : *${fr2(target)}*  (draft = ${String(DRAFT_K).replace(".", ",")} × H ÷ G)`);
   if (head.length) lines.unshift(...head, "");
-  if (target < draftOf(RANGE.G[1], RANGE.H[0]) || target > draftOf(RANGE.G[0], RANGE.H[1])) {
-    lines.push("", `⚠️ ${T(`Ce draft est hors de portée des pignons G${RANGE.G[0]}–${RANGE.G[1]} / H${RANGE.H[0]}–${RANGE.H[1]}`, "This draft is out of the gear range")} (${fr2(draftOf(RANGE.G[1], RANGE.H[0]))} – ${fr2(draftOf(RANGE.G[0], RANGE.H[1]))}).`);
+  if (target < draftOf(RANGE.G[1], hMin) || target > draftOf(RANGE.G[0], RANGE.H[1])) {
+    lines.push("", `⚠️ ${T(`Ce draft est hors de portée des pignons G${RANGE.G[0]}–${RANGE.G[1]} / H${hMin}–${RANGE.H[1]}`, "This draft is out of the gear range")} (${fr2(draftOf(RANGE.G[1], hMin))} – ${fr2(draftOf(RANGE.G[0], RANGE.H[1]))}).`);
   }
 
   lines.push("", `📐 *${T("Meilleurs couples", "Best pairs")}* (${T("marge = écart au draft visé", "margin = deviation from target")}) :`);
@@ -171,7 +172,7 @@ export async function countAnswer(q: CountQuery): Promise<string> {
   lines.push(`❌ ${T("Non disponibles", "Not available")} : ${noT.join(", ") || T("aucune", "none")}`);
   const allG: number[] = [], allH: number[] = [];
   for (let g = RANGE.G[0]; g <= RANGE.G[1]; g++) if (okTooth(`G${g}`)) allG.push(g);
-  for (let h = RANGE.H[0]; h <= RANGE.H[1]; h++) if (okTooth(`H${h}`)) allH.push(h);
+  for (let h = hMin; h <= RANGE.H[1]; h++) if (okTooth(`H${h}`)) allH.push(h);
   lines.push(`📦 ${T("Tout le stock utilisable", "All usable stock")} : ${teethList("G", allG) || T("aucun G", "no G")} · ${teethList("H", allH) || T("aucun H", "no H")}`);
   lines.push(`_${T("Stock moins les changements déjà en attente du bouton Fait.", "Stock minus changes already waiting for the Done button.")}_`);
   return lines.join("\n");

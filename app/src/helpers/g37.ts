@@ -130,12 +130,12 @@ const COMMON_FAULTS = [
   "Doffer 161 height settings", "Doffer sensor height settings",
 ];
 
-const GEAR_RANGE: Record<"G" | "H", [number, number]> = { G: [30, 65], H: [89, 113] };
+const GEAR_RANGE: Record<"G" | "H", [number, number]> = { G: [30, 65], H: [75, 113] }; // H75–88 ajoutés le 08/11/2026
 const GEARS_PER_MACHINE = 6;
 const STOCK_ALERT = 20;
 const ACCESS_CODE = "G37";
 
-// Draft total = 16,068 × H ÷ G (pignons de rechange G 30–65, H 89–113).
+// Draft total = 16,068 × H ÷ G (pignons de rechange G 30–65, H 75–113).
 const DRAFT_K = 16.068;
 
 function draftOf(g: number | null | undefined, h: number | null | undefined): number | null {

@@ -90,3 +90,13 @@ update machines set run_hank = round(run_count / g37_draft(run_g, run_h), 4)
 -- Mc 22 : le count 30 venait d'un changement annulé (G37/H103) ; avec G61/H98 le vrai count est inconnu.
 select set_config('g37.note', 'Correction 08/11 : count 30 laissé par le changement annulé du 04/11', true);
 update machines set run_count = null, run_hank = null where machine_no = 22 and run_g = 61 and run_h = 98 and run_count = 30;
+
+-- Pignons H75 à H88 (08/11/2026) : 12 pièces chacun en magasin.
+-- Le robot ne les PROPOSE pas tant que l'admin n'a pas écrit « autoriser H75 » (réglage gears.h_low_allowed).
+insert into gears (id, gear_type, teeth, stock, updated_at, updated_by)
+select 'H-' || t, 'H', t, 12, now(), 'Habib Edessou'
+from generate_series(75, 88) t
+on conflict (id) do nothing;
+
+insert into app_config (key, value, updated_at) values ('gears.h_low_allowed', 'non', now())
+on conflict (key) do nothing;

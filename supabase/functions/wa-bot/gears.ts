@@ -1,8 +1,13 @@
 // Pignons G/H : draft, stock disponible et propositions de couples (utilisés par les fiches et par l'assistant).
-import { sql } from "./db.ts";
+import { config, sql } from "./db.ts";
 
 export const DRAFT_K = 16.068; // draft = 16,068 × H ÷ G (même formule que l'app)
-export const RANGE = { G: [30, 65], H: [89, 113] } as const;
+// Pignons qui existent (lecture des fiches, modifications). H75–H88 ajoutés le 08/11/2026 (12 pièces chacun).
+export const RANGE = { G: [30, 65], H: [75, 113] } as const;
+/** Plus petit H que le robot a le droit de PROPOSER : 89 tant que l'admin n'a pas écrit « autoriser H75 » au robot (réglage gears.h_low_allowed). */
+export async function proposeHMin(): Promise<number> {
+  return /^(oui|yes|1|true)$/i.test(String(await config("gears.h_low_allowed")).trim()) ? RANGE.H[0] : 89;
+}
 export const PER_MACHINE = 6;
 export const draftOf = (g: number, h: number) => (DRAFT_K * h) / g;
 // Marge en % avec 2 décimales (« +0,01 % ») : au dixième, un écart de 0,04 % s'affichait « +0,0 % ».
@@ -24,12 +29,12 @@ export async function availableStock(excludeMachines: number[]): Promise<Stock> 
 }
 
 // Autres couples G/H en stock qui donnent un draft proche (on garde si possible un des deux pignons de la fiche).
-export function proposals(target: number, slip: { g: number | null; h: number | null }, stock: Stock, nMachines: number) {
+export function proposals(target: number, slip: { g: number | null; h: number | null }, stock: Stock, nMachines: number, hMin = 89) {
   const need = PER_MACHINE * nMachines;
   const out: Array<{ g: number; h: number; d: number; err: number; keeps: number }> = [];
   for (let g = RANGE.G[0]; g <= RANGE.G[1]; g++) {
     if ((stock.get(`G${g}`) ?? 0) < need) continue;
-    for (let h = RANGE.H[0]; h <= RANGE.H[1]; h++) {
+    for (let h = hMin; h <= RANGE.H[1]; h++) {
       if ((stock.get(`H${h}`) ?? 0) < need) continue;
       const d = draftOf(g, h);
       out.push({ g, h, d, err: (d - target) / target, keeps: (g === slip.g ? 1 : 0) + (h === slip.h ? 1 : 0) });
